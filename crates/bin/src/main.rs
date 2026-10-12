@@ -1391,41 +1391,107 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             execute_action(state, Action::Split(SplitDirection::Vertical));
         }
         Action::SpawnAgent { profile, worktree } => {
+            if state.layout_mgr.active_workspace().zoomed_pane.is_some() {
+                state.toasts.push(Toast {
+                    title: "Spawn Disabled".into(),
+                    message: "Pane is maximized. Restore (Alt+Enter, Leader+m, or click [-]) before spawning a new pane.".into(),
+                    level: ToastLevel::Warning,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+                return false;
+            }
             let pid = state.allocate_pane_id();
-            if let Some(prof_cfg) = state.config.agents.get(&profile) {
-                let prof = AgentProfile::from_config(prof_cfg);
-                if let Ok(agent_pane) = AgentPane::spawn(
+            if let Some(prof_cfg) = state.config.agents.get(&profile).cloned() {
+                let prof = AgentProfile::from_config(&prof_cfg);
+                let (w, h) = if state.term_width > 0 && state.term_height > 0 {
+                    (
+                        state.term_width.saturating_sub(2),
+                        state.term_height.saturating_sub(4),
+                    )
+                } else {
+                    (80, 24)
+                };
+                match AgentPane::spawn(
                     pid,
                     &prof,
                     worktree,
-                    80,
-                    24,
+                    w,
+                    h,
                     state.config.scrollback_lines,
                     state.event_tx.clone(),
                 ) {
-                    state.panes.insert(pid, Box::new(agent_pane));
+                    Ok(agent_pane) => {
+                        state.panes.insert(pid, Box::new(agent_pane));
+                        let _ = state
+                            .layout_mgr
+                            .active_workspace_mut()
+                            .split_current(pid, SplitDirection::Vertical);
+                    }
+                    Err(e) => {
+                        state.toasts.push(Toast {
+                            title: "Spawn Error".into(),
+                            message: format!("Failed to spawn agent '{}': {}", prof.command, e),
+                            level: ToastLevel::Error,
+                            created_at: chrono::Utc::now(),
+                            duration_secs: 4,
+                        });
+                    }
+                }
+            } else {
+                state.toasts.push(Toast {
+                    title: "Unknown Agent".into(),
+                    message: format!("Agent profile '{}' not found in config.", profile),
+                    level: ToastLevel::Error,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+            }
+        }
+        Action::AttachTmux { session } => {
+            if state.layout_mgr.active_workspace().zoomed_pane.is_some() {
+                state.toasts.push(Toast {
+                    title: "Attach Disabled".into(),
+                    message: "Pane is maximized. Restore (Alt+Enter, Leader+m, or click [-]) before attaching tmux.".into(),
+                    level: ToastLevel::Warning,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+                return false;
+            }
+            let pid = state.allocate_pane_id();
+            let (w, h) = if state.term_width > 0 && state.term_height > 0 {
+                (
+                    state.term_width.saturating_sub(2),
+                    state.term_height.saturating_sub(4),
+                )
+            } else {
+                (80, 24)
+            };
+            match AgentPane::spawn_tmux(
+                pid,
+                &session,
+                w,
+                h,
+                state.config.scrollback_lines,
+                state.event_tx.clone(),
+            ) {
+                Ok(tmux_pane) => {
+                    state.panes.insert(pid, Box::new(tmux_pane));
                     let _ = state
                         .layout_mgr
                         .active_workspace_mut()
                         .split_current(pid, SplitDirection::Vertical);
                 }
-            }
-        }
-        Action::AttachTmux { session } => {
-            let pid = state.allocate_pane_id();
-            if let Ok(tmux_pane) = AgentPane::spawn_tmux(
-                pid,
-                &session,
-                80,
-                24,
-                state.config.scrollback_lines,
-                state.event_tx.clone(),
-            ) {
-                state.panes.insert(pid, Box::new(tmux_pane));
-                let _ = state
-                    .layout_mgr
-                    .active_workspace_mut()
-                    .split_current(pid, SplitDirection::Vertical);
+                Err(e) => {
+                    state.toasts.push(Toast {
+                        title: "Tmux Error".into(),
+                        message: format!("Failed to attach tmux session '{}': {}", session, e),
+                        level: ToastLevel::Error,
+                        created_at: chrono::Utc::now(),
+                        duration_secs: 4,
+                    });
+                }
             }
         }
         Action::PasteImageBridge => {

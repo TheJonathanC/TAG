@@ -240,6 +240,49 @@ impl CommandRegistry {
                 action: Action::TogglePassthrough,
             },
             Command {
+                id: "agents.launch_agy".into(),
+                name: "Launch Agent: Antigravity (agy)".into(),
+                category: CommandCategory::Agents,
+                description: "Spawn an Antigravity agent pane".into(),
+                default_shortcut: None,
+                action: Action::SpawnAgent {
+                    profile: "agy".into(),
+                    worktree: None,
+                },
+            },
+            Command {
+                id: "agents.launch_claude".into(),
+                name: "Launch Agent: Claude Code".into(),
+                category: CommandCategory::Agents,
+                description: "Spawn a Claude Code agent pane".into(),
+                default_shortcut: None,
+                action: Action::SpawnAgent {
+                    profile: "claude".into(),
+                    worktree: None,
+                },
+            },
+            Command {
+                id: "agents.launch_codex".into(),
+                name: "Launch Agent: Codex CLI".into(),
+                category: CommandCategory::Agents,
+                description: "Spawn a Codex CLI agent pane".into(),
+                default_shortcut: None,
+                action: Action::SpawnAgent {
+                    profile: "codex".into(),
+                    worktree: None,
+                },
+            },
+            Command {
+                id: "agents.attach_tmux".into(),
+                name: "Attach Tmux Session".into(),
+                category: CommandCategory::Agents,
+                description: "Spawn or attach to a tmux session pane".into(),
+                default_shortcut: None,
+                action: Action::AttachTmux {
+                    session: "default".into(),
+                },
+            },
+            Command {
                 id: "system.quit".into(),
                 name: "Quit TAG".into(),
                 category: CommandCategory::System,
