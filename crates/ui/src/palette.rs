@@ -3,24 +3,56 @@ use fuzzy_matcher::FuzzyMatcher;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState,
+};
 use ratatui::Frame;
 
 use tag_core::command::{Command, CommandRegistry};
 use tag_core::theme::Theme;
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct PaletteState {
     pub is_open: bool,
     pub query: String,
     pub selected_index: usize,
+    pub scroll_offset: usize,
+}
+
+pub fn get_matched_commands<'a>(
+    registry: &'a CommandRegistry,
+    query: &str,
+) -> Vec<(&'a Command, i64)> {
+    let matcher = SkimMatcherV2::default();
+    let mut matched_commands: Vec<(&Command, i64)> = registry
+        .commands()
+        .iter()
+        .filter_map(|cmd| {
+            if query.is_empty() {
+                Some((cmd, 0))
+            } else {
+                let score = matcher
+                    .fuzzy_match(&cmd.name, query)
+                    .or_else(|| matcher.fuzzy_match(&cmd.description, query))
+                    .or_else(|| matcher.fuzzy_match(cmd.category.name(), query));
+                score.map(|s| (cmd, s))
+            }
+        })
+        .collect();
+
+    if !query.is_empty() {
+        matched_commands.sort_by_key(|a| std::cmp::Reverse(a.1));
+    }
+
+    matched_commands
 }
 
 pub fn render_command_palette(
     frame: &mut Frame,
     total_area: Rect,
     registry: &CommandRegistry,
-    state: &PaletteState,
+    state: &mut PaletteState,
     theme: &Theme,
 ) {
     if !state.is_open {
@@ -46,8 +78,26 @@ pub fn render_command_palette(
 
     frame.render_widget(Clear, modal_area);
 
+    let matched_commands = get_matched_commands(registry, &state.query);
+    let total_matches = matched_commands.len();
+
+    // Clamp selected_index
+    if total_matches > 0 && state.selected_index >= total_matches {
+        state.selected_index = total_matches - 1;
+    }
+
+    let title = if total_matches > 0 {
+        format!(
+            " Command Palette [{}/{}] (Esc to close) ",
+            state.selected_index + 1,
+            total_matches
+        )
+    } else {
+        " Command Palette [0/0] (Esc to close) ".to_string()
+    };
+
     let block = Block::default()
-        .title(" Command Palette (Esc to close) ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -72,30 +122,28 @@ pub fn render_command_palette(
     let search_p = Paragraph::new(search_line).style(theme.title_focused);
     frame.render_widget(search_p, search_area);
 
-    // Fuzzy match commands
-    let matcher = SkimMatcherV2::default();
-    let mut matched_commands: Vec<(&Command, i64)> = registry
-        .commands()
-        .iter()
-        .filter_map(|cmd| {
-            if state.query.is_empty() {
-                Some((cmd, 0))
-            } else {
-                let score = matcher
-                    .fuzzy_match(&cmd.name, &state.query)
-                    .or_else(|| matcher.fuzzy_match(&cmd.description, &state.query))
-                    .or_else(|| matcher.fuzzy_match(cmd.category.name(), &state.query));
-                score.map(|s| (cmd, s))
-            }
-        })
-        .collect();
-
-    if !state.query.is_empty() {
-        matched_commands.sort_by_key(|a| std::cmp::Reverse(a.1));
+    let visible_count = list_area.height as usize;
+    if visible_count == 0 || total_matches == 0 {
+        return;
     }
 
+    // Scroll window adjustment: ensure selected_index is always inside visible viewport
+    if state.selected_index < state.scroll_offset {
+        state.scroll_offset = state.selected_index;
+    } else if state.selected_index >= state.scroll_offset + visible_count {
+        state.scroll_offset = state.selected_index + 1 - visible_count;
+    }
+
+    // Clamp scroll_offset
+    let max_scroll = total_matches.saturating_sub(visible_count);
+    state.scroll_offset = state.scroll_offset.min(max_scroll);
+
+    let start_idx = state.scroll_offset;
+    let end_idx = (start_idx + visible_count).min(total_matches);
+
     let mut list_items = Vec::new();
-    for (idx, (cmd, _)) in matched_commands.iter().enumerate() {
+    for (offset, (cmd, _)) in matched_commands[start_idx..end_idx].iter().enumerate() {
+        let idx = start_idx + offset;
         let is_selected = idx == state.selected_index;
         let mut spans = Vec::new();
 
@@ -139,32 +187,21 @@ pub fn render_command_palette(
 
     let list = List::new(list_items);
     frame.render_widget(list, list_area);
+
+    // Render scrollbar if there are more items than visible
+    if total_matches > visible_count {
+        let mut scrollbar_state = ScrollbarState::new(total_matches).position(state.selected_index);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_symbol("#")
+            .track_symbol(Some("|"));
+        frame.render_stateful_widget(scrollbar, list_area, &mut scrollbar_state);
+    }
 }
 
 pub fn get_selected_command<'a>(
     registry: &'a CommandRegistry,
     state: &PaletteState,
 ) -> Option<&'a Command> {
-    let matcher = SkimMatcherV2::default();
-    let mut matched_commands: Vec<(&Command, i64)> = registry
-        .commands()
-        .iter()
-        .filter_map(|cmd| {
-            if state.query.is_empty() {
-                Some((cmd, 0))
-            } else {
-                let score = matcher
-                    .fuzzy_match(&cmd.name, &state.query)
-                    .or_else(|| matcher.fuzzy_match(&cmd.description, &state.query))
-                    .or_else(|| matcher.fuzzy_match(cmd.category.name(), &state.query));
-                score.map(|s| (cmd, s))
-            }
-        })
-        .collect();
-
-    if !state.query.is_empty() {
-        matched_commands.sort_by_key(|a| std::cmp::Reverse(a.1));
-    }
-
+    let matched_commands = get_matched_commands(registry, &state.query);
     matched_commands.get(state.selected_index).map(|(c, _)| *c)
 }

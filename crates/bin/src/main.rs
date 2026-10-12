@@ -31,10 +31,10 @@ use tag_notify::{
 };
 use tag_pty::PtyPane;
 use tag_ui::{
-    get_selected_command, hit_test_status_bar, render_command_palette, render_empty_state,
-    render_help_overlay, render_rename_modal, render_status_bar, render_tab_tray, render_toasts,
-    render_tour, render_which_key, PaletteState, RenameModalState, StatusBarClickTarget,
-    StatusBarProps, TabTrayState, Toast, ToastLevel, TourState, TrayItem,
+    get_matched_commands, get_selected_command, hit_test_status_bar, render_command_palette,
+    render_empty_state, render_help_overlay, render_rename_modal, render_status_bar,
+    render_tab_tray, render_toasts, render_tour, render_which_key, PaletteState, RenameModalState,
+    StatusBarClickTarget, StatusBarProps, TabTrayState, Toast, ToastLevel, TourState, TrayItem,
 };
 use tag_usage::{render_usage_overlay, AgyProvider, UsageOverlayState, UsageStore};
 use tag_vault::{render_vault_overlay, VaultOverlayState, VaultStore};
@@ -455,7 +455,7 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             frame,
             size,
             &state.command_registry,
-            &state.palette,
+            &mut state.palette,
             &state.theme,
         );
     }
@@ -637,6 +637,8 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
 
             // Check modal overlays first
             if state.palette.is_open {
+                let matched_count =
+                    get_matched_commands(&state.command_registry, &state.palette.query).len();
                 match key.code {
                     KeyCode::Esc => {
                         state.palette.is_open = false;
@@ -646,7 +648,27 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                             state.palette.selected_index.saturating_sub(1);
                     }
                     KeyCode::Down => {
-                        state.palette.selected_index += 1;
+                        if matched_count > 0 && state.palette.selected_index + 1 < matched_count {
+                            state.palette.selected_index += 1;
+                        }
+                    }
+                    KeyCode::PageUp => {
+                        state.palette.selected_index =
+                            state.palette.selected_index.saturating_sub(8);
+                    }
+                    KeyCode::PageDown => {
+                        if matched_count > 0 {
+                            state.palette.selected_index =
+                                (state.palette.selected_index + 8).min(matched_count - 1);
+                        }
+                    }
+                    KeyCode::Home => {
+                        state.palette.selected_index = 0;
+                    }
+                    KeyCode::End => {
+                        if matched_count > 0 {
+                            state.palette.selected_index = matched_count - 1;
+                        }
                     }
                     KeyCode::Enter => {
                         if let Some(cmd) =
@@ -660,10 +682,12 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                     KeyCode::Backspace => {
                         state.palette.query.pop();
                         state.palette.selected_index = 0;
+                        state.palette.scroll_offset = 0;
                     }
                     KeyCode::Char(c) => {
                         state.palette.query.push(c);
                         state.palette.selected_index = 0;
+                        state.palette.scroll_offset = 0;
                     }
                     _ => {}
                 }
@@ -1009,6 +1033,33 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::TerminalInput(CrossEvent::Mouse(mouse)) => {
+            if state.palette.is_open {
+                let matched_count =
+                    get_matched_commands(&state.command_registry, &state.palette.query).len();
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        if matched_count > 0 && state.palette.selected_index + 1 < matched_count {
+                            state.palette.selected_index += 1;
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        state.palette.selected_index =
+                            state.palette.selected_index.saturating_sub(1);
+                    }
+                    MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                        if let Some(cmd) =
+                            get_selected_command(&state.command_registry, &state.palette)
+                        {
+                            let act = cmd.action.clone();
+                            state.palette.is_open = false;
+                            return execute_action(state, act);
+                        }
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
             let tray_w = if state.tab_tray.is_open {
                 (state.term_width * 25 / 100)
                     .clamp(24, 45)
@@ -1172,6 +1223,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             state.palette.is_open = !state.palette.is_open;
             state.palette.query.clear();
             state.palette.selected_index = 0;
+            state.palette.scroll_offset = 0;
         }
         Action::ToggleHelp => {
             state.help_open = !state.help_open;
@@ -1196,6 +1248,8 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         Action::ToggleQuickSwitcher => {
             state.palette.is_open = true;
             state.palette.query.clear();
+            state.palette.selected_index = 0;
+            state.palette.scroll_offset = 0;
         }
         Action::TogglePassthrough => {
             state.key_state_machine.toggle_passthrough();
