@@ -74,6 +74,7 @@ struct AppState {
     tab_tray: TabTrayState,
     palette: PaletteState,
     help_open: bool,
+    help_scroll: usize,
     tour: TourState,
     attention_state: AttentionOverlayState,
     usage_state: UsageOverlayState,
@@ -237,6 +238,7 @@ async fn run_app(
         tab_tray: TabTrayState::default(),
         palette: PaletteState::default(),
         help_open: false,
+        help_scroll: 0,
         tour: TourState::default(),
         attention_state: AttentionOverlayState::default(),
         usage_state: UsageOverlayState::default(),
@@ -435,7 +437,13 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     }
 
     if state.help_open {
-        render_help_overlay(frame, size, state.key_state_machine.keymap(), &state.theme);
+        render_help_overlay(
+            frame,
+            size,
+            state.key_state_machine.keymap(),
+            state.help_scroll,
+            &state.theme,
+        );
     }
 
     if state.attention_state.is_open {
@@ -595,8 +603,24 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             }
 
             if state.help_open {
-                if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
-                    state.help_open = false;
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        state.help_open = false;
+                        state.help_scroll = 0;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        state.help_scroll = state.help_scroll.saturating_sub(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        state.help_scroll += 1;
+                    }
+                    KeyCode::PageUp => {
+                        state.help_scroll = state.help_scroll.saturating_sub(10);
+                    }
+                    KeyCode::PageDown => {
+                        state.help_scroll += 10;
+                    }
+                    _ => {}
                 }
                 return false;
             }
@@ -802,6 +826,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleHelp => {
             state.help_open = !state.help_open;
+            state.help_scroll = 0;
         }
         Action::ToggleWhichKey => {}
         Action::ToggleAttentionQueue => {
