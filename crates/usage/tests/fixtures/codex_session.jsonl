@@ -1,0 +1,2 @@
+{"event":"token_count","session_id":"sess_codex_1","model":"gpt-4o","tokens":{"input_tokens":1800,"output_tokens":620,"cached_tokens":400}}
+{"event":"turn_complete","session_id":"sess_codex_1","model":"gpt-4o","usage":{"prompt_tokens":3100,"completion_tokens":750,"cached_tokens":1100}}

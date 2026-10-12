@@ -1,0 +1,19 @@
+[package]
+name = "tag-vault"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tag-core = { path = "../core" }
+chacha20poly1305 = { workspace = true }
+argon2 = { workspace = true }
+zeroize = { workspace = true }
+secrecy = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+ratatui = { workspace = true }

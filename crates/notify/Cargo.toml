@@ -1,0 +1,14 @@
+[package]
+name = "tag-notify"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tag-core = { path = "../core" }
+notify-rust = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+ratatui = { workspace = true }

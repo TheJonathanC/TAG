@@ -1,0 +1,15 @@
+[package]
+name = "tag-clipboard"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tag-core = { path = "../core" }
+arboard = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+ratatui = { workspace = true }

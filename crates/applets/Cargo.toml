@@ -1,0 +1,12 @@
+[package]
+name = "tag-applets"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tag-core = { path = "../core" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }

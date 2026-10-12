@@ -1,0 +1,16 @@
+[package]
+name = "tag-agents"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tag-core = { path = "../core" }
+tag-pty = { path = "../pty" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+ratatui = { workspace = true }
+tracing = { workspace = true }

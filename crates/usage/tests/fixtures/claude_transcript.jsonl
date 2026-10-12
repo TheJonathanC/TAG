@@ -1,0 +1,2 @@
+{"session_id":"sess_claude_1","message":{"model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":1250,"output_tokens":350,"cache_read_input_tokens":500,"cache_creation_input_tokens":100}}}
+{"session_id":"sess_claude_1","message":{"model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":2200,"output_tokens":420,"cache_read_input_tokens":1200,"cache_creation_input_tokens":0}}}

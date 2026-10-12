@@ -1,0 +1,42 @@
+[package]
+name = "tag"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tag"
+path = "src/main.rs"
+
+[[bin]]
+name = "cockpit-notify"
+path = "src/notify_bin.rs"
+
+[[bin]]
+name = "tag-notify"
+path = "src/tag_notify.rs"
+
+[dependencies]
+tag-core = { path = "../core" }
+tag-pty = { path = "../pty" }
+tag-layout = { path = "../layout" }
+tag-keys = { path = "../keys" }
+tag-ui = { path = "../ui" }
+tag-git = { path = "../git" }
+tag-clipboard = { path = "../clipboard" }
+tag-vault = { path = "../vault" }
+tag-agents = { path = "../agents" }
+tag-notify = { path = "../notify" }
+tag-usage = { path = "../usage" }
+tag-applets = { path = "../applets" }
+tokio = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+arboard = { workspace = true }

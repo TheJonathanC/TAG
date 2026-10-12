@@ -1,0 +1,15 @@
+[package]
+name = "tag-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tag-core = { path = "../core" }
+tag-layout = { path = "../layout" }
+tag-pty = { path = "../pty" }
+tag-keys = { path = "../keys" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+fuzzy-matcher = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
