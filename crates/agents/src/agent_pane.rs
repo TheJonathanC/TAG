@@ -142,6 +142,14 @@ impl Pane for AgentPane {
         self.pty.title()
     }
 
+    fn set_title(&mut self, title: String) {
+        self.pty.set_title(title);
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool) {
+        self.pty.set_zoomed(zoomed);
+    }
+
     fn kind(&self) -> PaneKind {
         self.pty.kind()
     }

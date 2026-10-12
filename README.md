@@ -126,13 +126,15 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 - **How to use it:**
   - **Split vertically:** Press `Ctrl+Space |`.
   - **Split horizontally:** Press `Ctrl+Space -`.
+  - **Maximize / Restore pane:** Press `Ctrl+Space m`, `Alt+m`, `Ctrl+Space z`, or `Alt+Enter` to maximize the active pane to fullscreen. Press again to restore splits. You can also click the `[^]` (maximize) / `[-]` (restore) button on the top-right border.
+  - **Splits disabled while maximized:** To preserve layout geometry and prevent accidental hidden splits, creating splits (`Ctrl+Space |`, `Ctrl+Space -`, or Tab Tray `s`/`v`) is blocked while a pane is maximized. Restore the pane first to split.
+  - **Rename pane:** Press `Ctrl+Space ,` or `Ctrl+Space R` to open an interactive rename prompt. Enter the new title and press `Enter`. In the Tab Tray (`Ctrl+Space b`), press `r` on any pane to rename it. Custom titles persist across app restarts.
   - **Close focused pane:** Press `Ctrl+Space x`.
   - **Click to close:** Click the `[x]` button on the top-right corner of any pane border.
   - **Shell exit:** Type `exit` or press `Ctrl+D` inside any shell to close the pane cleanly.
   - **Tab Tray close:** Press `Ctrl+Space b`, navigate to any pane, and press `x`.
   - **Command Palette close:** Press `Ctrl+Space p` and search `Close Pane`.
   - **Move focus:** Press `Alt+h` (left), `Alt+j` (down), `Alt+k` (up), or `Alt+l` (right).
-  - **Fullscreen zoom:** Press `Alt+Enter` or `Ctrl+Space z` to zoom the active pane. Press again to restore splits.
   - **Resize splits:** Drag split borders using your mouse.
   - **Switch workspaces:** Press `Alt+1` through `Alt+9`.
   - **Create workspace:** Press `Ctrl+Space w`.

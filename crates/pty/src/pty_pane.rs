@@ -42,6 +42,7 @@ pub struct PtyPane {
     child_pid: Option<u32>,
     command: Option<String>,
     args: Vec<String>,
+    is_zoomed: bool,
 }
 
 impl PtyPane {
@@ -155,6 +156,7 @@ impl PtyPane {
             child_pid,
             command,
             args: args.to_vec(),
+            is_zoomed: false,
         })
     }
 
@@ -203,6 +205,14 @@ impl Pane for PtyPane {
 
     fn title(&self) -> String {
         self.title.clone()
+    }
+
+    fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool) {
+        self.is_zoomed = zoomed;
     }
 
     fn kind(&self) -> PaneKind {
@@ -386,6 +396,19 @@ impl Pane for PtyPane {
             ));
         }
 
+        if self.is_zoomed {
+            title_spans.push(Span::styled(
+                " [MAXIMIZED] ",
+                theme.accent.add_modifier(Modifier::BOLD),
+            ));
+        }
+
+        let zoom_btn = if self.is_zoomed {
+            Span::styled("[-] ", theme.warning.add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled("[^] ", theme.text.add_modifier(Modifier::DIM))
+        };
+
         let close_btn = Span::styled(
             "[x] ",
             if is_focused {
@@ -399,7 +422,7 @@ impl Pane for PtyPane {
             .borders(Borders::ALL)
             .border_style(border_style)
             .title(RatLine::from(title_spans))
-            .title(RatLine::from(vec![close_btn]).alignment(Alignment::Right));
+            .title(RatLine::from(vec![zoom_btn, close_btn]).alignment(Alignment::Right));
 
         let inner_area = block.inner(area);
         frame.render_widget(block, area);

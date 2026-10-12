@@ -109,6 +109,9 @@ impl Keymap {
         );
         leader_bindings.insert('x', (Action::ClosePane, "Close pane"));
         leader_bindings.insert('z', (Action::ToggleZoom, "Toggle zoom"));
+        leader_bindings.insert('m', (Action::ToggleZoom, "Maximize / restore"));
+        leader_bindings.insert(',', (Action::RenamePane(None), "Rename pane"));
+        leader_bindings.insert('R', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('Z', (Action::UndoLayout, "Undo layout"));
         leader_bindings.insert('h', (Action::Focus(Direction::Left), "Focus left"));
         leader_bindings.insert('j', (Action::Focus(Direction::Down), "Focus down"));
@@ -166,6 +169,10 @@ impl Keymap {
         direct_bindings.insert(
             KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
             (Action::ToggleZoom, "Toggle zoom"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Char('m'), KeyModifiers::ALT),
+            (Action::ToggleZoom, "Maximize / restore"),
         );
         direct_bindings.insert(
             KeyChord::new(KeyCode::Left, KeyModifiers::ALT),

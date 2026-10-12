@@ -85,9 +85,22 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
         ));
     }
 
+    // Maximized indicator
+    let is_zoomed = props.layout_mgr.active_workspace().zoomed_pane.is_some();
+    if is_zoomed {
+        spans.push(Span::styled(
+            " [MAXIMIZED] ",
+            props.theme.accent.add_modifier(Modifier::BOLD),
+        ));
+    }
+
     // Fill space before hints
     let current_len: usize = spans.iter().map(|s| s.width()).sum();
-    let hints = "Leader+? Help · Leader+p Palette · Leader+b Tray · Leader+x Close";
+    let hints = if is_zoomed {
+        "Alt+Enter / Leader+m Restore · Leader+x Close · Leader+p Palette"
+    } else {
+        "Leader+m Max · Leader+x Close · Leader+, Rename · Leader+p Palette"
+    };
     let spaces = area.width as usize - current_len.min(area.width as usize);
 
     if spaces > hints.len() + 2 {

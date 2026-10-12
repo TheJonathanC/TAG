@@ -46,6 +46,8 @@ impl PaneKind {
 pub trait Pane: Send + Sync {
     fn id(&self) -> PaneId;
     fn title(&self) -> String;
+    fn set_title(&mut self, _title: String) {}
+    fn set_zoomed(&mut self, _zoomed: bool) {}
     fn kind(&self) -> PaneKind;
     fn render(&mut self, frame: &mut Frame, area: Rect, is_focused: bool, theme: &Theme);
     fn handle_event(&mut self, event: &AppEvent) -> EventResult;

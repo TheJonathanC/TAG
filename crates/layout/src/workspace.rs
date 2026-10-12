@@ -59,6 +59,9 @@ impl Workspace {
         new_pane_id: PaneId,
         direction: SplitDirection,
     ) -> Result<(), &'static str> {
+        if self.zoomed_pane.is_some() {
+            return Err("Cannot split while a pane is maximized");
+        }
         if self.root.is_none() || self.focused_pane.is_none() {
             self.add_initial_pane(new_pane_id);
             return Ok(());

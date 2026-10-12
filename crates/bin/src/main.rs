@@ -32,9 +32,9 @@ use tag_notify::{
 use tag_pty::PtyPane;
 use tag_ui::{
     get_selected_command, hit_test_status_bar, render_command_palette, render_empty_state,
-    render_help_overlay, render_status_bar, render_tab_tray, render_toasts, render_tour,
-    render_which_key, PaletteState, StatusBarClickTarget, StatusBarProps, TabTrayState, Toast,
-    ToastLevel, TourState, TrayItem,
+    render_help_overlay, render_rename_modal, render_status_bar, render_tab_tray, render_toasts,
+    render_tour, render_which_key, PaletteState, RenameModalState, StatusBarClickTarget,
+    StatusBarProps, TabTrayState, Toast, ToastLevel, TourState, TrayItem,
 };
 use tag_usage::{render_usage_overlay, AgyProvider, UsageOverlayState, UsageStore};
 use tag_vault::{render_vault_overlay, VaultOverlayState, VaultStore};
@@ -82,6 +82,7 @@ struct AppState {
     git_state: GitOverlayState,
     snippet_state: SnippetOverlayState,
     vault_state: VaultOverlayState,
+    rename_prompt: Option<RenameModalState>,
     usage_store: UsageStore,
     snippets: SnippetBank,
     vault: VaultStore,
@@ -248,6 +249,7 @@ async fn run_app(
         git_state: GitOverlayState::default(),
         snippet_state: SnippetOverlayState::default(),
         vault_state: VaultOverlayState::default(),
+        rename_prompt: None,
         usage_store,
         snippets,
         vault,
@@ -403,10 +405,12 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     } else {
         let rects = state.layout_mgr.compute_rects(content_area);
         let focused_id = state.layout_mgr.active_workspace().focused_pane;
+        let is_zoomed = state.layout_mgr.active_workspace().zoomed_pane.is_some();
 
         for (pane_id, area) in rects {
             if let Some(pane) = state.panes.get_mut(&pane_id) {
                 let is_focused = focused_id == Some(pane_id);
+                pane.set_zoomed(is_zoomed && is_focused);
                 pane.render(frame, area, is_focused, &state.theme);
             }
         }
@@ -528,6 +532,10 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
         render_tour(frame, size, &state.tour, &state.theme);
     }
 
+    if let Some(ref rename_state) = state.rename_prompt {
+        render_rename_modal(frame, size, rename_state, &state.theme);
+    }
+
     render_toasts(frame, size, &state.toasts, &state.theme);
 }
 
@@ -593,6 +601,40 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::TerminalInput(CrossEvent::Key(key)) => {
+            // Check rename modal prompt first
+            if let Some(ref mut rename) = state.rename_prompt {
+                match key.code {
+                    KeyCode::Enter => {
+                        let new_title = rename.input.trim().to_string();
+                        let pid = rename.pane_id;
+                        if !new_title.is_empty() {
+                            if let Some(pane) = state.panes.get_mut(&pid) {
+                                pane.set_title(new_title.clone());
+                                state.toasts.push(Toast {
+                                    title: "Pane Renamed".into(),
+                                    message: format!("Title updated to '{}'", new_title),
+                                    level: ToastLevel::Success,
+                                    created_at: chrono::Utc::now(),
+                                    duration_secs: 2,
+                                });
+                            }
+                        }
+                        state.rename_prompt = None;
+                    }
+                    KeyCode::Esc => {
+                        state.rename_prompt = None;
+                    }
+                    KeyCode::Backspace => {
+                        rename.input.pop();
+                    }
+                    KeyCode::Char(c) => {
+                        rename.input.push(c);
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
             // Check modal overlays first
             if state.palette.is_open {
                 match key.code {
@@ -877,7 +919,14 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                             }
                         }
                     }
-                    KeyCode::Char('z') => {
+                    KeyCode::Char('r') => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let pid = item.pane_id;
+                            state.tab_tray.is_open = false;
+                            return execute_action(state, Action::RenamePane(Some(pid)));
+                        }
+                    }
+                    KeyCode::Char('z') | KeyCode::Char('m') => {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let target_ws = item.workspace_id;
                             let target_pid = item.pane_id;
@@ -1064,11 +1113,21 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                                 && row >= rect.y
                                 && row < rect.y + rect.height
                             {
-                                // Clicked on top-right [x] close button
-                                if row == rect.y && col >= rect.x + rect.width.saturating_sub(5) {
-                                    state.layout_mgr.active_workspace_mut().remove_pane(pid);
-                                    state.panes.remove(&pid);
-                                    return false;
+                                // Clicked on top border
+                                if row == rect.y {
+                                    // 1. Clicked on top-right [x] close button
+                                    if col >= rect.x + rect.width.saturating_sub(4) {
+                                        state.layout_mgr.active_workspace_mut().remove_pane(pid);
+                                        state.panes.remove(&pid);
+                                        return false;
+                                    }
+                                    // 2. Clicked on maximize/restore button [^] or [-]
+                                    if col >= rect.x + rect.width.saturating_sub(8) {
+                                        state.layout_mgr.active_workspace_mut().focused_pane =
+                                            Some(pid);
+                                        state.layout_mgr.active_workspace_mut().toggle_zoom();
+                                        return false;
+                                    }
                                 }
                                 state.layout_mgr.active_workspace_mut().focused_pane = Some(pid);
                                 break;
@@ -1150,7 +1209,24 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         Action::UndoLayout => {
             state.layout_mgr.active_workspace_mut().undo_layout();
         }
+        Action::RenamePane(target_pid) => {
+            let pid = target_pid.or(state.layout_mgr.active_workspace().focused_pane);
+            if let Some(pid) = pid {
+                let current_title = state.panes.get(&pid).map(|p| p.title()).unwrap_or_default();
+                state.rename_prompt = Some(RenameModalState::new(pid, current_title));
+            }
+        }
         Action::Split(direction) => {
+            if state.layout_mgr.active_workspace().zoomed_pane.is_some() {
+                state.toasts.push(Toast {
+                    title: "Split Disabled".into(),
+                    message: "Pane is maximized. Restore (Alt+Enter, Leader+m, or click [-]) before splitting.".into(),
+                    level: ToastLevel::Warning,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+                return false;
+            }
             let new_id = state.allocate_pane_id();
             let env = if state.vault.is_unlocked() {
                 state.vault.get_env_set()

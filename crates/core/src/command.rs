@@ -89,11 +89,19 @@ impl CommandRegistry {
             },
             Command {
                 id: "layout.toggle_zoom".into(),
-                name: "Toggle Zoom".into(),
+                name: "Maximize / Restore Pane".into(),
                 category: CommandCategory::Layout,
                 description: "Toggle fullscreen zoom on focused pane".into(),
-                default_shortcut: Some("Leader+z".into()),
+                default_shortcut: Some("Alt+Enter / Leader+m / Leader+z".into()),
                 action: Action::ToggleZoom,
+            },
+            Command {
+                id: "pane.rename".into(),
+                name: "Rename Pane".into(),
+                category: CommandCategory::Layout,
+                description: "Change the title of the active pane".into(),
+                default_shortcut: Some("Leader+, / Leader+R".into()),
+                action: Action::RenamePane(None),
             },
             Command {
                 id: "layout.undo".into(),

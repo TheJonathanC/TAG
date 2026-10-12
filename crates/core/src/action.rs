@@ -32,6 +32,7 @@ pub enum Action {
     Split(SplitDirection),
     ClosePane,
     ToggleZoom,
+    RenamePane(Option<PaneId>),
     Resize(Direction, u16),
     NewWorkspace,
     CloseWorkspace(WorkspaceId),

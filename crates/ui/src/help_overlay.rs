@@ -69,8 +69,9 @@ pub fn render_help_overlay(
             vec![
                 ("Ctrl+Space |", "Split Vertical", "Split focused pane side-by-side (left/right)"),
                 ("Ctrl+Space -", "Split Horizontal", "Split focused pane top-and-bottom"),
-                ("Ctrl+Space x", "Close Pane", "Terminate child process and reclaim layout space"),
-                ("Alt+Enter / Ctrl+Space z", "Toggle Zoom", "Fullscreen the active pane without altering tree state"),
+                ("Ctrl+Space x / [x] Click", "Close Pane", "Terminate child process and reclaim layout space"),
+                ("Alt+Enter / Ctrl+Space m / z", "Maximize / Restore", "Toggle fullscreen zoom (splits are blocked until restored)"),
+                ("Ctrl+Space , / Ctrl+Space R", "Rename Pane", "Open interactive prompt to customize pane title"),
                 ("Ctrl+Space Z", "Undo Layout", "Revert accidental splits, closes, or resizes from history"),
                 ("Mouse Drag Border", "Resize Border", "Click and drag pane borders to adjust layout ratios"),
             ],
@@ -81,10 +82,11 @@ pub fn render_help_overlay(
             vec![
                 ("Type letters", "Live Filter", "Filter rows instantly by pane title, branch, or workspace"),
                 ("Enter / Left Click", "Switch / Focus", "Jump to that pane, switching workspaces automatically"),
-                ("s / v keys", "Open in Split", "Pull selected pane into the current view as a vertical/horizontal split"),
+                ("s / v keys", "Open in Split", "Pull selected pane into current view (blocked if maximized)"),
                 ("Shift+Enter", "Swap Panes", "Swap the focused pane's position with the selected pane"),
                 ("x key", "Close Pane", "Close the selected pane directly from the tray"),
-                ("z key", "Zoom Pane", "Focus and zoom into the selected pane"),
+                ("r key", "Rename Pane", "Change title of selected pane"),
+                ("m / z keys", "Maximize / Zoom", "Focus and maximize the selected pane"),
             ],
         ),
         (
