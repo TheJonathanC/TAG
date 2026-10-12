@@ -19,7 +19,7 @@ pub fn render_which_key(frame: &mut Frame, total_area: Rect, keymap: &Keymap, th
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" ⌨  Leader Chords (Which-Key) ")
+        .title(" Leader Chords (Which-Key) ")
         .borders(Borders::ALL)
         .border_style(theme.accent);
 

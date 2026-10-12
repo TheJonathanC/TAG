@@ -50,9 +50,24 @@ impl VtGrid {
     }
 
     pub fn is_alternate(&self) -> bool {
-        // vt100 does not have a direct screen.alternate() boolean in all versions,
-        // but screen.hide_cursor() or parser inspection can be used.
-        false
+        self.parser.screen().alternate_screen()
+    }
+
+    pub fn mouse_protocol_mode(&self) -> vt100::MouseProtocolMode {
+        self.parser.screen().mouse_protocol_mode()
+    }
+
+    pub fn mouse_protocol_encoding(&self) -> vt100::MouseProtocolEncoding {
+        self.parser.screen().mouse_protocol_encoding()
+    }
+
+    pub fn set_scrollback(&mut self, offset: usize) -> usize {
+        self.parser.set_scrollback(offset);
+        self.parser.screen().scrollback()
+    }
+
+    pub fn scrollback(&self) -> usize {
+        self.parser.screen().scrollback()
     }
 
     pub fn cursor_position(&self) -> (u16, u16) {
@@ -68,55 +83,30 @@ impl VtGrid {
 
     pub fn render_viewport(
         &self,
-        scroll_offset: usize,
-        ring: &ScrollbackRing,
+        _scroll_offset: usize,
+        _ring: &ScrollbackRing,
     ) -> Vec<RatLine<'static>> {
         let screen = self.parser.screen();
         let (_num_rows, cols) = screen.size();
         let visible_rows = self.rows as usize;
 
-        if scroll_offset == 0 {
-            // Render directly from current active screen
-            let mut lines = Vec::with_capacity(visible_rows);
-            for row in 0..visible_rows {
-                let mut spans = Vec::new();
-                for col in 0..cols {
-                    if let Some(cell) = screen.cell(row as u16, col) {
-                        let style = convert_vt_style(cell);
-                        let s = cell.contents();
-                        if !s.is_empty() {
-                            spans.push(Span::styled(s.to_string(), style));
-                        } else {
-                            spans.push(Span::styled(" ", style));
-                        }
+        let mut lines = Vec::with_capacity(visible_rows);
+        for row in 0..visible_rows {
+            let mut spans = Vec::new();
+            for col in 0..cols {
+                if let Some(cell) = screen.cell(row as u16, col) {
+                    let style = convert_vt_style(cell);
+                    let s = cell.contents();
+                    if !s.is_empty() {
+                        spans.push(Span::styled(s.to_string(), style));
+                    } else {
+                        spans.push(Span::styled(" ", style));
                     }
                 }
-                lines.push(RatLine::from(spans));
             }
-            lines
-        } else {
-            // Render from scrollback history
-            let ring_len = ring.len();
-            let mut lines = Vec::with_capacity(visible_rows);
-
-            let end_idx = ring_len.saturating_sub(scroll_offset);
-            let start_idx = end_idx.saturating_sub(visible_rows);
-
-            for i in start_idx..end_idx {
-                if let Some(line) = ring.get(i) {
-                    lines.push(RatLine::raw(line.text.clone()));
-                } else {
-                    lines.push(RatLine::raw(""));
-                }
-            }
-
-            // Fill remainder with empty lines if any
-            while lines.len() < visible_rows {
-                lines.push(RatLine::raw(""));
-            }
-
-            lines
+            lines.push(RatLine::from(spans));
         }
+        lines
     }
 
     pub fn get_row_text(&self, row: u16) -> String {

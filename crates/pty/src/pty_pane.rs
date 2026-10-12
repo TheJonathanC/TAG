@@ -1,5 +1,5 @@
 use portable_pty::{CommandBuilder, MasterPty, PtyPair, PtySize};
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line as RatLine, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -39,6 +39,9 @@ pub struct PtyPane {
     height: u16,
     needs_attention: bool,
     agent_status_text: Option<&'static str>,
+    child_pid: Option<u32>,
+    command: Option<String>,
+    args: Vec<String>,
 }
 
 impl PtyPane {
@@ -65,6 +68,7 @@ impl PtyPane {
         })?;
 
         let shell = command
+            .clone()
             .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
 
         let mut cmd = CommandBuilder::new(&shell);
@@ -81,7 +85,8 @@ impl PtyPane {
         cmd.env("COLORTERM", "truecolor");
         cmd.env("COCKPIT_PANE_ID", id.0.to_string());
 
-        let _child = pair.slave.spawn_command(cmd)?;
+        let child = pair.slave.spawn_command(cmd)?;
+        let child_pid = child.process_id();
         drop(pair.slave); // Close slave handle in master process
 
         let master: Box<dyn MasterPty + Send> = pair.master;
@@ -147,6 +152,9 @@ impl PtyPane {
             height: height.max(1),
             needs_attention: false,
             agent_status_text: None,
+            child_pid,
+            command,
+            args: args.to_vec(),
         })
     }
 
@@ -210,18 +218,55 @@ impl Pane for PtyPane {
     }
 
     fn scroll(&mut self, delta: i32) {
-        if delta < 0 {
-            // Scroll down
-            self.scroll_offset = self.scroll_offset.saturating_sub((-delta) as usize);
+        if self.vt.is_alternate() {
+            let mouse_mode = self.vt.mouse_protocol_mode();
+            if mouse_mode != vt100::MouseProtocolMode::None {
+                let encoding = self.vt.mouse_protocol_encoding();
+                let (cursor_col, cursor_row) = self.vt.cursor_position();
+                let col = (cursor_col + 1).max(1);
+                let row = (cursor_row + 1).max(1);
+                let code = if delta > 0 { 64 } else { 65 };
+                let count = delta.unsigned_abs() as usize;
+
+                for _ in 0..count {
+                    match encoding {
+                        vt100::MouseProtocolEncoding::Sgr => {
+                            let seq = format!("\x1b[<{};{};{}M", code, col, row);
+                            self.write_bytes(seq.as_bytes());
+                        }
+                        vt100::MouseProtocolEncoding::Default => {
+                            let cb = (code + 32) as u8;
+                            let cx = (col.min(223) + 32) as u8;
+                            let cy = (row.min(223) + 32) as u8;
+                            self.write_bytes(&[0x1b, b'[', b'M', cb, cx, cy]);
+                        }
+                        _ => {
+                            let seq = format!("\x1b[<{};{};{}M", code, col, row);
+                            self.write_bytes(seq.as_bytes());
+                        }
+                    }
+                }
+            } else {
+                let arrow = if delta > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                let count = delta.unsigned_abs() as usize;
+                for _ in 0..count {
+                    self.write_bytes(arrow);
+                }
+            }
         } else {
-            // Scroll up
-            let max_scroll = self.ring.len();
-            self.scroll_offset = (self.scroll_offset + delta as usize).min(max_scroll);
+            if delta < 0 {
+                self.scroll_offset = self.scroll_offset.saturating_sub((-delta) as usize);
+            } else {
+                self.scroll_offset = self.scroll_offset.saturating_add(delta as usize);
+            }
+            let actual = self.vt.set_scrollback(self.scroll_offset);
+            self.scroll_offset = actual;
         }
     }
 
     fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+        self.vt.set_scrollback(0);
     }
 
     fn scroll_offset(&self) -> usize {
@@ -341,10 +386,20 @@ impl Pane for PtyPane {
             ));
         }
 
+        let close_btn = Span::styled(
+            "[x] ",
+            if is_focused {
+                theme.error
+            } else {
+                theme.text.add_modifier(Modifier::DIM)
+            },
+        );
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title(RatLine::from(title_spans));
+            .title(RatLine::from(title_spans))
+            .title(RatLine::from(vec![close_btn]).alignment(Alignment::Right));
 
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
@@ -374,4 +429,69 @@ impl Pane for PtyPane {
     fn agent_status(&self) -> Option<&'static str> {
         self.agent_status_text
     }
+
+    fn running_process(&self) -> (Option<String>, Vec<String>, Option<PathBuf>) {
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = self.child_pid {
+            if let Some((cmd, args, cwd)) = get_foreground_process(pid) {
+                let cmd_opt = if cmd.is_empty() { None } else { Some(cmd) };
+                return (cmd_opt, args, Some(cwd));
+            }
+        }
+
+        (self.command.clone(), self.args.clone(), self.cwd.clone())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn get_foreground_process(shell_pid: u32) -> Option<(String, Vec<String>, PathBuf)> {
+    let mut current_pid = shell_pid;
+    for _ in 0..10 {
+        let children_path = format!("/proc/{}/task/{}/children", current_pid, current_pid);
+        if let Ok(children_str) = std::fs::read_to_string(&children_path) {
+            let pids: Vec<u32> = children_str
+                .split_whitespace()
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect();
+            if let Some(&last_child) = pids.last() {
+                current_pid = last_child;
+                continue;
+            }
+        }
+        break;
+    }
+
+    let cwd = std::fs::read_link(format!("/proc/{}/cwd", current_pid))
+        .or_else(|_| std::fs::read_link(format!("/proc/{}/cwd", shell_pid)))
+        .ok()?;
+
+    let cmdline_bytes = std::fs::read(format!("/proc/{}/cmdline", current_pid)).ok()?;
+    if cmdline_bytes.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<String> = cmdline_bytes
+        .split(|&b| b == 0)
+        .filter(|slice| !slice.is_empty())
+        .map(|slice| String::from_utf8_lossy(slice).to_string())
+        .collect();
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let cmd = parts[0].clone();
+    let args = parts[1..].to_vec();
+
+    let cmd_name = std::path::Path::new(&cmd)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&cmd);
+
+    let is_shell = matches!(cmd_name, "bash" | "zsh" | "fish" | "sh" | "dash");
+    if current_pid == shell_pid && is_shell {
+        return Some((String::new(), Vec::new(), cwd));
+    }
+
+    Some((cmd, args, cwd))
 }

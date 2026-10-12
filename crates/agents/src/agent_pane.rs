@@ -213,4 +213,8 @@ impl Pane for AgentPane {
     fn copy_selection(&mut self) -> Option<String> {
         self.pty.copy_selection()
     }
+
+    fn running_process(&self) -> (Option<String>, Vec<String>, Option<PathBuf>) {
+        self.pty.running_process()
+    }
 }

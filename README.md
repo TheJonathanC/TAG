@@ -108,15 +108,18 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 - **What it is:** A 50,000-line circular buffer per pane combined with an in-app text selection engine.
 - **What it does:** Separates viewport navigation from process execution. Scrolling upward lets you inspect past output while the child process continues running. It renders a `[Scrolled: -N lines]` badge. Text selection works despite terminal mouse capture.
 - **How to use it:**
-  - **Scroll:** Use your mouse wheel, trackpad, or `PageUp` / `PageDown` to move through history.
-  - **Jump to bottom:** Press any key or scroll back to the end to resume live output.
+  - **Scroll:** Use your mouse wheel or trackpad over any pane. TAG dynamically detects alternate screen applications:
+    - In **htop, tmux, agy, vim, less**: wheel scrolling sends SGR mouse reporting sequences (if mouse mode is enabled) or Alternate Scroll cursor arrow keys (`Up` / `Down`), scrolling the program directly without clipping.
+    - In standard shells and build logs: wheel scrolling scrolls the terminal viewport ring buffer (up to 50,000 lines).
+  - **Keyboard scrollback:** Press `Shift+PageUp` / `Shift+PageDown` to scroll terminal history.
+  - **Jump to bottom:** Press any key to resume live output.
   - **Select text:** Click and drag with the left mouse button to highlight a character block.
   - **Select word:** Double-click on any word.
   - **Select line:** Triple-click on any row.
   - **Copy:** Releasing the mouse automatically copies selected text to your system clipboard using `arboard`.
   - **Terminal emulator bypass:** Hold `Shift` while dragging to bypass TAG and use your native terminal's selection mechanism.
 
-### 3. Binary tree tiling and virtual workspaces
+### 3. Binary tree tiling, pane management, and virtual workspaces
 
 - **What it is:** A geometric layout engine supporting arbitrary vertical and horizontal splits plus numbered virtual workspaces.
 - **What it does:** Calculates rectangular coordinates using ratio-based sizing. Moving, splitting, or zooming panes changes only display geometry; background processes are never restarted.
@@ -124,6 +127,10 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - **Split vertically:** Press `Ctrl+Space |`.
   - **Split horizontally:** Press `Ctrl+Space -`.
   - **Close focused pane:** Press `Ctrl+Space x`.
+  - **Click to close:** Click the `[x]` button on the top-right corner of any pane border.
+  - **Shell exit:** Type `exit` or press `Ctrl+D` inside any shell to close the pane cleanly.
+  - **Tab Tray close:** Press `Ctrl+Space b`, navigate to any pane, and press `x`.
+  - **Command Palette close:** Press `Ctrl+Space p` and search `Close Pane`.
   - **Move focus:** Press `Alt+h` (left), `Alt+j` (down), `Alt+k` (up), or `Alt+l` (right).
   - **Fullscreen zoom:** Press `Alt+Enter` or `Ctrl+Space z` to zoom the active pane. Press again to restore splits.
   - **Resize splits:** Drag split borders using your mouse.

@@ -87,7 +87,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
 
     // Fill space before hints
     let current_len: usize = spans.iter().map(|s| s.width()).sum();
-    let hints = "Leader+? Help · Leader+p Palette · Leader+b Tray";
+    let hints = "Leader+? Help · Leader+p Palette · Leader+b Tray · Leader+x Close";
     let spaces = area.width as usize - current_len.min(area.width as usize);
 
     if spaces > hints.len() + 2 {

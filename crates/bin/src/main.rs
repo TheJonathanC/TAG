@@ -283,8 +283,8 @@ async fn run_app(
                         pid,
                         sp.title,
                         sp.kind,
-                        None,
-                        &[],
+                        sp.command,
+                        &sp.args,
                         &env,
                         sp.cwd.or_else(|| std::env::current_dir().ok()),
                         term_size.width.saturating_sub(2),
@@ -545,6 +545,12 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
         AppEvent::PtyExited { pane_id, exit_code } => {
             if let Some(pane) = state.panes.get_mut(&pane_id) {
                 let _ = pane.handle_event(&AppEvent::PtyExited { pane_id, exit_code });
+            }
+            if exit_code.is_none() || exit_code == Some(0) {
+                for ws in state.layout_mgr.workspaces_mut() {
+                    ws.remove_pane(pane_id);
+                }
+                state.panes.remove(&pane_id);
             }
             false
         }
@@ -920,6 +926,29 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                 return execute_action(state, action);
             }
 
+            // Check Shift+PageUp / Shift+PageDown for viewport scrollback
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                match key.code {
+                    KeyCode::PageUp => {
+                        if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
+                            if let Some(pane) = state.panes.get_mut(&focused_id) {
+                                pane.scroll(15);
+                            }
+                        }
+                        return false;
+                    }
+                    KeyCode::PageDown => {
+                        if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
+                            if let Some(pane) = state.panes.get_mut(&focused_id) {
+                                pane.scroll(-15);
+                            }
+                        }
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+
             // In passthrough or normal non-chord mode, forward key to active child pane
             if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
                 if let Some(pane) = state.panes.get_mut(&focused_id) {
@@ -931,17 +960,43 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::TerminalInput(CrossEvent::Mouse(mouse)) => {
+            let tray_w = if state.tab_tray.is_open {
+                (state.term_width * 25 / 100)
+                    .clamp(24, 45)
+                    .min(state.term_width)
+            } else {
+                0
+            };
+            let content_w = state.term_width.saturating_sub(tray_w);
+            let content_h = state.term_height.saturating_sub(1);
+            let content_area = Rect {
+                x: tray_w,
+                y: 0,
+                width: content_w,
+                height: content_h,
+            };
+
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
-                        if let Some(pane) = state.panes.get_mut(&focused_id) {
+                    let target_id = state
+                        .layout_mgr
+                        .active_workspace()
+                        .hit_test(content_area, mouse.column, mouse.row)
+                        .or(state.layout_mgr.active_workspace().focused_pane);
+                    if let Some(pid) = target_id {
+                        if let Some(pane) = state.panes.get_mut(&pid) {
                             pane.scroll(3);
                         }
                     }
                 }
                 MouseEventKind::ScrollDown => {
-                    if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
-                        if let Some(pane) = state.panes.get_mut(&focused_id) {
+                    let target_id = state
+                        .layout_mgr
+                        .active_workspace()
+                        .hit_test(content_area, mouse.column, mouse.row)
+                        .or(state.layout_mgr.active_workspace().focused_pane);
+                    if let Some(pid) = target_id {
+                        if let Some(pane) = state.panes.get_mut(&pid) {
                             pane.scroll(-3);
                         }
                     }
@@ -970,9 +1025,6 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                     }
 
                     // 2. Check if clicked in Tab Tray
-                    let tray_w = (state.term_width * 25 / 100)
-                        .clamp(24, 45)
-                        .min(state.term_width);
                     if state.tab_tray.is_open && col < tray_w {
                         let list_start_y = if state.tab_tray.is_searching
                             || !state.tab_tray.search_query.is_empty()
@@ -999,25 +1051,29 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                     }
 
                     // 3. Content area
-                    let content_x = if state.tab_tray.is_open { tray_w } else { 0 };
-                    let content_w = state.term_width.saturating_sub(content_x);
-                    let content_h = state.term_height.saturating_sub(1);
-                    let content_area = Rect {
-                        x: content_x,
-                        y: 0,
-                        width: content_w,
-                        height: content_h,
-                    };
-
                     if state.layout_mgr.active_workspace().all_panes().is_empty() {
                         return execute_action(state, Action::SpawnShell);
-                    } else if let Some(hit) =
-                        state
+                    } else {
+                        let pane_rects = state
                             .layout_mgr
                             .active_workspace()
-                            .hit_test(content_area, col, row)
-                    {
-                        state.layout_mgr.active_workspace_mut().focused_pane = Some(hit);
+                            .compute_rects(content_area);
+                        for (&pid, &rect) in &pane_rects {
+                            if col >= rect.x
+                                && col < rect.x + rect.width
+                                && row >= rect.y
+                                && row < rect.y + rect.height
+                            {
+                                // Clicked on top-right [x] close button
+                                if row == rect.y && col >= rect.x + rect.width.saturating_sub(5) {
+                                    state.layout_mgr.active_workspace_mut().remove_pane(pid);
+                                    state.panes.remove(&pid);
+                                    return false;
+                                }
+                                state.layout_mgr.active_workspace_mut().focused_pane = Some(pid);
+                                break;
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -1329,13 +1385,16 @@ fn save_session_to_disk(state: &AppState) {
         saved.workspaces.push(SavedWorkspace::from(ws));
     }
     for (&pid, pane) in &state.panes {
+        let (command, args, cwd) = pane.running_process();
         saved.panes.insert(
             pid,
             SavedPane {
                 id: pid,
                 title: pane.title(),
                 kind: pane.kind(),
-                cwd: pane.cwd(),
+                cwd: cwd.or_else(|| pane.cwd()),
+                command,
+                args,
             },
         );
     }

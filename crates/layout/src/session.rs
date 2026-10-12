@@ -14,6 +14,10 @@ pub struct SavedPane {
     pub title: String,
     pub kind: PaneKind,
     pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +105,8 @@ mod tests {
                 title: "Shell".into(),
                 kind: PaneKind::Shell,
                 cwd: Some(PathBuf::from("/tmp")),
+                command: Some("htop".into()),
+                args: vec!["-d".into(), "10".into()],
             },
         );
 
@@ -112,6 +118,9 @@ mod tests {
         assert_eq!(loaded.active_workspace_id, WorkspaceId(1));
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(loaded.panes.len(), 1);
+        let pane = loaded.panes.get(&PaneId(1)).unwrap();
+        assert_eq!(pane.command.as_deref(), Some("htop"));
+        assert_eq!(pane.args, vec!["-d", "10"]);
 
         let _ = std::fs::remove_file(session_file);
     }

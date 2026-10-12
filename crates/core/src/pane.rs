@@ -73,4 +73,7 @@ pub trait Pane: Send + Sync {
     fn agent_status(&self) -> Option<&'static str> {
         None
     }
+    fn running_process(&self) -> (Option<String>, Vec<String>, Option<std::path::PathBuf>) {
+        (None, Vec::new(), self.cwd())
+    }
 }
