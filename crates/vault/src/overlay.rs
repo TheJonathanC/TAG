@@ -52,9 +52,9 @@ pub fn render_vault_overlay(
     };
 
     let title = if is_unlocked {
-        " 🔒 Secrets Vault [UNLOCKED] (Esc to close) "
+        " Secrets Vault [UNLOCKED] (Esc to close) "
     } else {
-        " 🔒 Secrets Vault [LOCKED] (Enter passphrase) "
+        " Secrets Vault [LOCKED] (Enter passphrase) "
     };
 
     let block = Block::default()
@@ -98,7 +98,7 @@ pub fn render_vault_overlay(
         } else {
             for key in keys {
                 list_items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("  🔑 {:<24}", key), theme.title_focused),
+                    Span::styled(format!("  * {:<24}", key), theme.title_focused),
                     Span::styled(" [••••••••••••] ", theme.info.add_modifier(Modifier::DIM)),
                     Span::styled(" (Auto-injected into agents)", theme.text),
                 ])));

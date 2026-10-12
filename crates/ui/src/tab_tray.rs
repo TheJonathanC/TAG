@@ -25,6 +25,7 @@ pub struct TabTrayState {
     pub is_open: bool,
     pub selected_index: usize,
     pub search_query: String,
+    pub is_searching: bool,
 }
 
 pub fn render_tab_tray(
@@ -59,15 +60,15 @@ pub fn render_tab_tray(
         .collect();
 
     let block = Block::default()
-        .title(" 📑 Tab Tray (Leader+b) ")
+        .title(" Tab Tray (Ctrl+Space b) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Search header if searching
-    let (list_area, search_area) = if !state.search_query.is_empty() {
+    // Search header if searching or has query
+    let (list_area, search_area) = if state.is_searching || !state.search_query.is_empty() {
         let s_area = Rect {
             x: inner.x,
             y: inner.y,
@@ -92,7 +93,7 @@ pub fn render_tab_tray(
     };
 
     if let Some(s_area) = search_area {
-        let search_text = format!("🔍 Search: {}_", state.search_query);
+        let search_text = format!("Search: {}_", state.search_query);
         let p = Paragraph::new(search_text).style(theme.accent);
         frame.render_widget(p, s_area);
     }
@@ -105,7 +106,7 @@ pub fn render_tab_tray(
         if current_ws != Some(item.workspace_id) {
             current_ws = Some(item.workspace_id);
             list_items.push(ListItem::new(Line::from(vec![Span::styled(
-                format!(" 📁 Workspace: {} ", item.workspace_name),
+                format!(" Workspace: {} ", item.workspace_name),
                 theme
                     .text
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -115,7 +116,7 @@ pub fn render_tab_tray(
         let is_selected = idx == state.selected_index;
         let mut spans = Vec::new();
 
-        let prefix = if is_selected { " ▶ " } else { "   " };
+        let prefix = if is_selected { "> " } else { "  " };
         spans.push(Span::raw(prefix));
 
         spans.push(Span::styled(format!("{} ", item.icon), theme.text));
@@ -130,7 +131,7 @@ pub fn render_tab_tray(
 
         if let Some(branch) = &item.branch {
             spans.push(Span::styled(
-                format!("🌿{} ", branch),
+                format!("git:{} ", branch),
                 theme.info.add_modifier(Modifier::DIM),
             ));
         }
@@ -145,12 +146,12 @@ pub fn render_tab_tray(
         spans.push(Span::styled(format!("[{}] ", item.status), status_style));
 
         if item.is_visible {
-            spans.push(Span::styled("👁 ", theme.info));
+            spans.push(Span::styled("[active] ", theme.info));
         }
 
         if item.needs_attention {
             spans.push(Span::styled(
-                "🔔 NEED ATTENTION ",
+                "[ATTN] ",
                 theme.warning.add_modifier(Modifier::BOLD),
             ));
         }
@@ -174,7 +175,7 @@ pub fn render_tab_tray(
         width: inner.width,
         height: 1,
     };
-    let hint_text = "Enter switch · s/v split · x close · r rename · z zoom";
+    let hint_text = "j/k move · Enter switch · / search · s/v split · x close · Esc close";
     let hint_p = Paragraph::new(hint_text).style(theme.text.add_modifier(Modifier::DIM));
     frame.render_widget(hint_p, hint_area);
 }

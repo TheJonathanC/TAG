@@ -310,7 +310,7 @@ impl Pane for PtyPane {
 
         if let Some(branch) = &self.branch {
             title_spans.push(Span::styled(
-                format!("🌿 {} ", branch),
+                format!("git: {} ", branch),
                 theme.info.add_modifier(Modifier::DIM),
             ));
         }

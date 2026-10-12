@@ -83,7 +83,7 @@ impl Pane for PeerChatPane {
         };
 
         let block = Block::default()
-            .title(" 💬 Peer Chat Applet ")
+            .title(" Peer Chat Applet ")
             .borders(Borders::ALL)
             .border_style(border_style);
 

@@ -49,7 +49,7 @@ pub fn render_git_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" 🌿 Git Worktrees & Diff (Esc to close) ")
+        .title(" Git Worktrees & Diff (Esc to close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -79,12 +79,12 @@ pub fn render_git_overlay(
     let mut wt_items = Vec::new();
     for (i, wt) in worktrees.iter().enumerate() {
         let is_sel = state.selected_section == 0 && i == state.selected_index;
-        let prefix = if is_sel { "▶ " } else { "  " };
+        let prefix = if is_sel { "> " } else { "  " };
         let branch_name = wt.branch.as_deref().unwrap_or("detached");
         let main_badge = if wt.is_main { " [main]" } else { "" };
 
         let span = Span::styled(
-            format!("{}{}: 🌿 {}{}", prefix, wt.name, branch_name, main_badge),
+            format!("{}{}: git: {}{}", prefix, wt.name, branch_name, main_badge),
             if is_sel {
                 theme.title_focused
             } else {
@@ -108,7 +108,7 @@ pub fn render_git_overlay(
     let mut file_items = Vec::new();
     for (i, f) in status.changed_files.iter().enumerate() {
         let is_sel = state.selected_section == 1 && i == state.selected_index;
-        let prefix = if is_sel { "▶ " } else { "  " };
+        let prefix = if is_sel { "> " } else { "  " };
         let staged_badge = if f.is_staged { "[S] " } else { "[U] " };
 
         let stat_color = match f.status {

@@ -68,7 +68,7 @@ pub fn render_tour(frame: &mut Frame, total_area: Rect, state: &TourState, theme
     frame.render_widget(Clear, area);
 
     let title = format!(
-        " 🧭 Quick Tour ({}/{}) - {} ",
+        " Quick Tour ({}/{}) - {} ",
         state.step + 1,
         TOUR_STEPS.len(),
         step_info.title

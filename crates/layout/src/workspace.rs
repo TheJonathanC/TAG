@@ -59,7 +59,12 @@ impl Workspace {
         new_pane_id: PaneId,
         direction: SplitDirection,
     ) -> Result<(), &'static str> {
-        let focused = self.focused_pane.ok_or("No focused pane to split")?;
+        if self.root.is_none() || self.focused_pane.is_none() {
+            self.add_initial_pane(new_pane_id);
+            return Ok(());
+        }
+
+        let focused = self.focused_pane.unwrap();
         self.save_undo_state();
 
         if let Some(root) = self.root.take() {

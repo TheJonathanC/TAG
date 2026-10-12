@@ -41,6 +41,10 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
         spans.push(Span::styled(badge, ws_style));
     }
 
+    spans.push(Span::styled(
+        " [+] ",
+        props.theme.text.add_modifier(Modifier::DIM),
+    ));
     spans.push(Span::raw(" | "));
 
     // Mode indicator
@@ -68,7 +72,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
     // Attention indicator
     if props.attention_count > 0 {
         spans.push(Span::styled(
-            format!(" 🔔 {} pending ", props.attention_count),
+            format!(" [!] {} pending ", props.attention_count),
             props.theme.warning.add_modifier(Modifier::BOLD),
         ));
     }
@@ -76,7 +80,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
     // Token summary
     if let Some(summary) = props.token_usage_summary {
         spans.push(Span::styled(
-            format!(" ⚡ {} ", summary),
+            format!(" [*] {} ", summary),
             props.theme.accent,
         ));
     }
@@ -98,4 +102,30 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
     let line = Line::from(spans);
     let p = Paragraph::new(line);
     frame.render_widget(p, area);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusBarClickTarget {
+    Workspace(usize),
+    AddWorkspace,
+}
+
+pub fn hit_test_status_bar(
+    workspaces: &[tag_layout::Workspace],
+    _active_id: tag_core::pane::WorkspaceId,
+    col: u16,
+) -> Option<StatusBarClickTarget> {
+    let mut current_x: u16 = 0;
+    for (i, ws) in workspaces.iter().enumerate() {
+        let badge_len = (6 + (i + 1).to_string().len() + ws.name.len()) as u16;
+        if col >= current_x && col < current_x + badge_len {
+            return Some(StatusBarClickTarget::Workspace(i));
+        }
+        current_x += badge_len;
+    }
+
+    if col >= current_x && col < current_x + 5 {
+        return Some(StatusBarClickTarget::AddWorkspace);
+    }
+    None
 }

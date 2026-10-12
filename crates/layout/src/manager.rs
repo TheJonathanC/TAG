@@ -26,6 +26,17 @@ impl LayoutManager {
         }
     }
 
+    pub fn from_workspaces(workspaces: Vec<Workspace>, active_id: WorkspaceId) -> Self {
+        let active_idx = workspaces
+            .iter()
+            .position(|w| w.id == active_id)
+            .unwrap_or(0);
+        Self {
+            workspaces,
+            active_idx,
+        }
+    }
+
     pub fn active_workspace(&self) -> &Workspace {
         &self.workspaces[self.active_idx]
     }

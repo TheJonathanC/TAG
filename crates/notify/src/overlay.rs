@@ -44,7 +44,7 @@ pub fn render_attention_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" 🔔 Attention Queue (Enter: jump to pane, Esc: close) ")
+        .title(" Attention Queue (Enter: jump to pane, Esc: close) ")
         .borders(Borders::ALL)
         .border_style(theme.warning);
 
@@ -63,7 +63,7 @@ pub fn render_attention_overlay(
         let is_selected = idx == state.selected_index;
         let mut spans = Vec::new();
 
-        let prefix = if is_selected { " ▶ " } else { "   " };
+        let prefix = if is_selected { "> " } else { "  " };
         spans.push(Span::raw(prefix));
 
         spans.push(Span::styled(

@@ -33,7 +33,7 @@ pub fn render_help_overlay(
     frame.render_widget(Clear, modal_area);
 
     let block = Block::default()
-        .title(" 📖 TAG Complete Feature Guide & Help (▲/▼ Scroll, Esc to close) ")
+        .title(" TAG Complete Feature Guide & Help (Up/Down Scroll, Esc to close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 

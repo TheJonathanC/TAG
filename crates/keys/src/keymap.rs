@@ -129,6 +129,21 @@ impl Keymap {
         leader_bindings.insert('?', (Action::ToggleHelp, "Help cheat-sheet"));
         leader_bindings.insert('q', (Action::Quit, "Quit"));
         leader_bindings.insert('r', (Action::ReloadConfig, "Reload config"));
+        leader_bindings.insert(']', (Action::NextWorkspace, "Next workspace"));
+        leader_bindings.insert('[', (Action::PrevWorkspace, "Previous workspace"));
+
+        // Leader+1..9 for workspace jumps
+        for i in 1..=9 {
+            if let Some(ch) = char::from_digit(i as u32, 10) {
+                leader_bindings.insert(
+                    ch,
+                    (
+                        Action::SwitchWorkspace(tag_core::pane::WorkspaceId(i)),
+                        "Switch workspace",
+                    ),
+                );
+            }
+        }
 
         let mut direct_bindings = HashMap::new();
         // Alt+h/j/k/l focus navigation
@@ -151,6 +166,14 @@ impl Keymap {
         direct_bindings.insert(
             KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
             (Action::ToggleZoom, "Toggle zoom"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Left, KeyModifiers::ALT),
+            (Action::PrevWorkspace, "Previous workspace"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Right, KeyModifiers::ALT),
+            (Action::NextWorkspace, "Next workspace"),
         );
         direct_bindings.insert(
             KeyChord::new(KeyCode::F(1), KeyModifiers::empty()),

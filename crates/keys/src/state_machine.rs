@@ -95,22 +95,29 @@ impl KeyStateMachine {
                 self.leader_press_time = None;
 
                 // Check if leader followed by Esc cancels or toggles passthrough
-                if let crossterm::event::KeyCode::Esc = event.code {
-                    return Some(Action::TogglePassthrough);
-                }
-
-                // Check follower char
-                if let crossterm::event::KeyCode::Char(c) = event.code {
-                    // Normalize shift key if uppercase
-                    let ch = if event.modifiers.contains(KeyModifiers::SHIFT) {
-                        c.to_ascii_uppercase()
-                    } else {
-                        c
-                    };
-
-                    if let Some((action, _desc)) = self.keymap.leader_bindings.get(&ch) {
-                        return Some(action.clone());
+                match event.code {
+                    crossterm::event::KeyCode::Esc => {
+                        return Some(Action::TogglePassthrough);
                     }
+                    crossterm::event::KeyCode::Tab => {
+                        return Some(Action::NextWorkspace);
+                    }
+                    crossterm::event::KeyCode::BackTab => {
+                        return Some(Action::PrevWorkspace);
+                    }
+                    crossterm::event::KeyCode::Char(c) => {
+                        // Normalize shift key if uppercase
+                        let ch = if event.modifiers.contains(KeyModifiers::SHIFT) {
+                            c.to_ascii_uppercase()
+                        } else {
+                            c
+                        };
+
+                        if let Some((action, _desc)) = self.keymap.leader_bindings.get(&ch) {
+                            return Some(action.clone());
+                        }
+                    }
+                    _ => {}
                 }
 
                 None

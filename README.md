@@ -6,14 +6,14 @@ TAG combines PTY process management with agent supervision, a decoupled 60 FPS r
 
 ```
        ┌──────────────────────────────────────────────────────────┐
-       │ 🤖 claude [awaiting-input]  │ 🤖 agy [running]           │
-       │ > Run test suite? (y/n)     │ Running turn 4/12...       │
-       │                             │                            │
-       ├─────────────────────────────┴────────────────────────────┤
-       │ ❯_ shell                                                 │
+       │ [agent] claude [awaiting-input] │ [agent] agy [running]  │
+       │ > Run test suite? (y/n)         │ Running turn 4/12...   │
+       │                                 │                        │
+       ├─────────────────────────────────┴────────────────────────┤
+       │ [sh] shell                                               │
        │ $ git status                                             │
        └──────────────────────────────────────────────────────────┘
-       [1: Main] [2: Dev] | [NORMAL] 🔔 1 pending | ⚡ 14.2k tok
+       [1: Main] [2: Dev] | [NORMAL] [!] 1 pending | [*] 14.2k tok
 ```
 
 ---

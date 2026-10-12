@@ -43,7 +43,7 @@ pub fn render_usage_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" ⚡ Token Usage & Estimated Cost (Esc to close) ")
+        .title(" Token Usage & Estimated Cost (Esc to close) ")
         .borders(Borders::ALL)
         .border_style(theme.accent);
 

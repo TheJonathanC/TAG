@@ -48,10 +48,10 @@ pub fn render_toasts(frame: &mut Frame, total_area: Rect, toasts: &[Toast], them
         frame.render_widget(Clear, area);
 
         let (border_style, icon) = match toast.level {
-            ToastLevel::Info => (theme.info, "ℹ "),
-            ToastLevel::Warning => (theme.warning, "⚠ "),
-            ToastLevel::Error => (theme.error, "✖ "),
-            ToastLevel::Success => (theme.success, "✔ "),
+            ToastLevel::Info => (theme.info, "[i] "),
+            ToastLevel::Warning => (theme.warning, "[!] "),
+            ToastLevel::Error => (theme.error, "[x] "),
+            ToastLevel::Success => (theme.success, "[ok] "),
         };
 
         let block = Block::default()

@@ -35,10 +35,10 @@ pub enum PaneKind {
 impl PaneKind {
     pub fn icon(&self) -> &'static str {
         match self {
-            PaneKind::Shell => "❯_",
-            PaneKind::Agent => "🤖",
-            PaneKind::Tmux => "🪟",
-            PaneKind::Applet => "🧩",
+            PaneKind::Shell => "[sh]",
+            PaneKind::Agent => "[agent]",
+            PaneKind::Tmux => "[tmux]",
+            PaneKind::Applet => "[app]",
         }
     }
 }

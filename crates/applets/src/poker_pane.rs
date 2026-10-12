@@ -25,13 +25,13 @@ impl PokerPane {
             title: "Texas Hold'em".into(),
             pot: 150,
             player_chips: 1000,
-            player_hand: vec!["A♠".into(), "K♠".into()],
+            player_hand: vec!["As".into(), "Ks".into()],
             community_cards: vec![
-                "Q♠".into(),
-                "J♠".into(),
-                "10♦".into(),
-                "2♣".into(),
-                "7♥".into(),
+                "Qs".into(),
+                "Js".into(),
+                "10d".into(),
+                "2c".into(),
+                "7h".into(),
             ],
             current_bet: 50,
         }
@@ -69,7 +69,7 @@ impl Pane for PokerPane {
         };
 
         let block = Block::default()
-            .title(" ♠ Texas Hold'em Applet ♥ ")
+            .title(" Texas Hold'em Applet ")
             .borders(Borders::ALL)
             .border_style(border_style);
 

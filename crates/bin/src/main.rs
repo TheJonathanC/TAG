@@ -25,15 +25,16 @@ use tag_core::pane::{Pane, PaneId, PaneKind};
 use tag_core::theme::Theme;
 use tag_git::{GitBackend, GitOverlayState, StandardGitBackend};
 use tag_keys::KeyStateMachine;
-use tag_layout::LayoutManager;
+use tag_layout::{LayoutManager, SavedPane, SavedSession, SavedWorkspace, Workspace};
 use tag_notify::{
     render_attention_overlay, AttentionOverlayState, AttentionQueue, Notifier, SystemNotifier,
 };
 use tag_pty::PtyPane;
 use tag_ui::{
-    get_selected_command, render_command_palette, render_help_overlay, render_status_bar,
-    render_tab_tray, render_toasts, render_tour, render_which_key, PaletteState, StatusBarProps,
-    TabTrayState, Toast, ToastLevel, TourState, TrayItem,
+    get_selected_command, hit_test_status_bar, render_command_palette, render_empty_state,
+    render_help_overlay, render_status_bar, render_tab_tray, render_toasts, render_tour,
+    render_which_key, PaletteState, StatusBarClickTarget, StatusBarProps, TabTrayState, Toast,
+    ToastLevel, TourState, TrayItem,
 };
 use tag_usage::{render_usage_overlay, AgyProvider, UsageOverlayState, UsageStore};
 use tag_vault::{render_vault_overlay, VaultOverlayState, VaultStore};
@@ -88,6 +89,8 @@ struct AppState {
     notifier: SystemNotifier,
     event_tx: UnboundedSender<AppEvent>,
     is_dirty: bool,
+    term_width: u16,
+    term_height: u16,
 }
 
 #[tokio::main]
@@ -252,30 +255,56 @@ async fn run_app(
         notifier: SystemNotifier,
         event_tx: event_tx.clone(),
         is_dirty: true,
+        term_width: 80,
+        term_height: 24,
     };
 
-    // Spawn initial shell pane
-    let initial_pane_id = state.allocate_pane_id();
     let term_size = terminal.size()?;
-    let initial_pane = PtyPane::spawn(
-        initial_pane_id,
-        "Shell".into(),
-        PaneKind::Shell,
-        None,
-        &[],
-        &HashMap::new(),
-        std::env::current_dir().ok(),
-        term_size.width.saturating_sub(2),
-        term_size.height.saturating_sub(4),
-        state.config.scrollback_lines,
-        event_tx.clone(),
-    )?;
+    state.term_width = term_size.width;
+    state.term_height = term_size.height;
 
-    state.panes.insert(initial_pane_id, Box::new(initial_pane));
-    state
-        .layout_mgr
-        .active_workspace_mut()
-        .add_initial_pane(initial_pane_id);
+    // Restore saved session if present, otherwise start with empty workspace showing ASCII art
+    let session_path = dirs_or_home()
+        .join(".config")
+        .join("tag")
+        .join("session.json");
+    if session_path.exists() {
+        if let Ok(saved) = SavedSession::load_from_file(&session_path) {
+            if !saved.panes.is_empty() {
+                let mut max_pid = 0u32;
+                for (pid, sp) in saved.panes {
+                    max_pid = max_pid.max(pid.0);
+                    let env = if state.vault.is_unlocked() {
+                        state.vault.get_env_set()
+                    } else {
+                        HashMap::new()
+                    };
+                    if let Ok(pane) = PtyPane::spawn(
+                        pid,
+                        sp.title,
+                        sp.kind,
+                        None,
+                        &[],
+                        &env,
+                        sp.cwd.or_else(|| std::env::current_dir().ok()),
+                        term_size.width.saturating_sub(2),
+                        term_size.height.saturating_sub(4),
+                        state.config.scrollback_lines,
+                        event_tx.clone(),
+                    ) {
+                        state.panes.insert(pid, Box::new(pane));
+                    }
+                }
+                if !state.panes.is_empty() {
+                    let workspaces: Vec<Workspace> =
+                        saved.workspaces.into_iter().map(Into::into).collect();
+                    state.layout_mgr =
+                        LayoutManager::from_workspaces(workspaces, saved.active_workspace_id);
+                    state.next_pane_id = max_pid + 1;
+                }
+            }
+        }
+    }
 
     // Initial log scan for active agents
     scan_known_agent_logs(&mut state);
@@ -298,9 +327,12 @@ async fn run_app(
 
         let should_quit = handle_app_event(&mut state, event);
         if should_quit {
+            save_session_to_disk(&state);
             break;
         }
     }
+
+    save_session_to_disk(&state);
 
     // Clean up socket file
     let _ = std::fs::remove_file(socket_path);
@@ -364,37 +396,25 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
         (None, main_area)
     };
 
-    // 1. Render active workspace panes
-    let rects = state.layout_mgr.compute_rects(content_area);
-    let focused_id = state.layout_mgr.active_workspace().focused_pane;
+    // 1. Render active workspace panes or empty state
+    let active_panes = state.layout_mgr.active_workspace().all_panes();
+    if active_panes.is_empty() {
+        render_empty_state(frame, content_area, &state.theme);
+    } else {
+        let rects = state.layout_mgr.compute_rects(content_area);
+        let focused_id = state.layout_mgr.active_workspace().focused_pane;
 
-    for (pane_id, area) in rects {
-        if let Some(pane) = state.panes.get_mut(&pane_id) {
-            let is_focused = focused_id == Some(pane_id);
-            pane.render(frame, area, is_focused, &state.theme);
+        for (pane_id, area) in rects {
+            if let Some(pane) = state.panes.get_mut(&pane_id) {
+                let is_focused = focused_id == Some(pane_id);
+                pane.render(frame, area, is_focused, &state.theme);
+            }
         }
     }
 
     // 2. Render Tab Tray if open
     if let Some(t_area) = tray_area {
-        let mut tray_items = Vec::new();
-        for ws in state.layout_mgr.workspaces() {
-            for pid in ws.all_panes() {
-                if let Some(p) = state.panes.get(&pid) {
-                    tray_items.push(TrayItem {
-                        pane_id: pid,
-                        workspace_id: ws.id,
-                        workspace_name: ws.name.clone(),
-                        title: p.title(),
-                        icon: p.kind().icon(),
-                        branch: p.branch(),
-                        status: p.agent_status().unwrap_or("running"),
-                        is_visible: ws.id == state.layout_mgr.active_workspace_id(),
-                        needs_attention: false,
-                    });
-                }
-            }
-        }
+        let tray_items = build_tray_items(state);
         render_tab_tray(frame, t_area, &tray_items, &state.tab_tray, &state.theme);
     }
 
@@ -743,6 +763,158 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                 return false;
             }
 
+            if state.tab_tray.is_open {
+                let tray_items = build_tray_items(state);
+                let filtered = get_filtered_tray_items(&tray_items, &state.tab_tray.search_query);
+                let count = filtered.len();
+
+                if state.tab_tray.is_searching {
+                    match key.code {
+                        KeyCode::Esc => {
+                            state.tab_tray.is_searching = false;
+                            state.tab_tray.search_query.clear();
+                            state.tab_tray.selected_index = 0;
+                        }
+                        KeyCode::Enter => {
+                            state.tab_tray.is_searching = false;
+                        }
+                        KeyCode::Up => {
+                            state.tab_tray.selected_index =
+                                state.tab_tray.selected_index.saturating_sub(1);
+                        }
+                        KeyCode::Down => {
+                            if count > 0 {
+                                state.tab_tray.selected_index =
+                                    (state.tab_tray.selected_index + 1).min(count - 1);
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            state.tab_tray.search_query.pop();
+                            state.tab_tray.selected_index = 0;
+                        }
+                        KeyCode::Char(c) => {
+                            state.tab_tray.search_query.push(c);
+                            state.tab_tray.selected_index = 0;
+                        }
+                        _ => {}
+                    }
+                    return false;
+                }
+
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        state.tab_tray.is_open = false;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        state.tab_tray.selected_index =
+                            state.tab_tray.selected_index.saturating_sub(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if count > 0 {
+                            state.tab_tray.selected_index =
+                                (state.tab_tray.selected_index + 1).min(count - 1);
+                        }
+                    }
+                    KeyCode::Char('/') => {
+                        state.tab_tray.is_searching = true;
+                    }
+                    KeyCode::Enter => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let target_ws = item.workspace_id;
+                            let target_pid = item.pane_id;
+                            state.tab_tray.is_open = false;
+                            state.layout_mgr.switch_workspace(target_ws);
+                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let target_ws = item.workspace_id;
+                            let target_pid = item.pane_id;
+                            state.tab_tray.is_open = false;
+                            state.layout_mgr.switch_workspace(target_ws);
+                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+                            return execute_action(
+                                state,
+                                Action::Split(SplitDirection::Horizontal),
+                            );
+                        }
+                    }
+                    KeyCode::Char('v') => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let target_ws = item.workspace_id;
+                            let target_pid = item.pane_id;
+                            state.tab_tray.is_open = false;
+                            state.layout_mgr.switch_workspace(target_ws);
+                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+                            return execute_action(state, Action::Split(SplitDirection::Vertical));
+                        }
+                    }
+                    KeyCode::Char('x') => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let pid = item.pane_id;
+                            let ws_id = item.workspace_id;
+                            if let Some(ws) = state
+                                .layout_mgr
+                                .workspaces_mut()
+                                .iter_mut()
+                                .find(|w| w.id == ws_id)
+                            {
+                                ws.remove_pane(pid);
+                            }
+                            state.panes.remove(&pid);
+                            if state.tab_tray.selected_index > 0
+                                && state.tab_tray.selected_index >= count.saturating_sub(1)
+                            {
+                                state.tab_tray.selected_index =
+                                    state.tab_tray.selected_index.saturating_sub(1);
+                            }
+                        }
+                    }
+                    KeyCode::Char('z') => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let target_ws = item.workspace_id;
+                            let target_pid = item.pane_id;
+                            state.layout_mgr.switch_workspace(target_ws);
+                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+                            state.layout_mgr.active_workspace_mut().toggle_zoom();
+                        }
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
+            // If active workspace is empty, check empty state actions and leader keys
+            if state.layout_mgr.active_workspace().all_panes().is_empty() {
+                if let Some(action) = state.key_state_machine.process_key(key) {
+                    return execute_action(state, action);
+                }
+
+                match key.code {
+                    KeyCode::Char('c') | KeyCode::Enter => {
+                        return execute_action(state, Action::SpawnShell);
+                    }
+                    KeyCode::Char('w') => {
+                        return execute_action(state, Action::NewWorkspace);
+                    }
+                    KeyCode::Char('p') => {
+                        return execute_action(state, Action::ToggleCommandPalette);
+                    }
+                    KeyCode::Char('b') => {
+                        return execute_action(state, Action::ToggleTabTray);
+                    }
+                    KeyCode::Char('?') => {
+                        return execute_action(state, Action::ToggleHelp);
+                    }
+                    KeyCode::Char('q') => {
+                        return execute_action(state, Action::Quit);
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
             // Process through key state machine
             if let Some(action) = state.key_state_machine.process_key(key) {
                 return execute_action(state, action);
@@ -775,19 +947,76 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                     }
                 }
                 MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                    // Check if clicked in Tab Tray or pane
                     let col = mouse.column;
                     let row = mouse.row;
-                    if let Some(hit) = state.layout_mgr.active_workspace().hit_test(
-                        Rect {
-                            x: 0,
-                            y: 0,
-                            width: 200,
-                            height: 100,
-                        },
-                        col,
-                        row,
-                    ) {
+
+                    // 1. Check if clicked on status bar
+                    if state.term_height > 0 && row >= state.term_height.saturating_sub(1) {
+                        if let Some(target) = hit_test_status_bar(
+                            state.layout_mgr.workspaces(),
+                            state.layout_mgr.active_workspace_id(),
+                            col,
+                        ) {
+                            match target {
+                                StatusBarClickTarget::Workspace(idx) => {
+                                    state.layout_mgr.switch_workspace_index(idx);
+                                }
+                                StatusBarClickTarget::AddWorkspace => {
+                                    return execute_action(state, Action::NewWorkspace);
+                                }
+                            }
+                        }
+                        return false;
+                    }
+
+                    // 2. Check if clicked in Tab Tray
+                    let tray_w = (state.term_width * 25 / 100)
+                        .clamp(24, 45)
+                        .min(state.term_width);
+                    if state.tab_tray.is_open && col < tray_w {
+                        let list_start_y = if state.tab_tray.is_searching
+                            || !state.tab_tray.search_query.is_empty()
+                        {
+                            2
+                        } else {
+                            1
+                        };
+                        if row >= list_start_y {
+                            let clicked_idx = (row - list_start_y) as usize;
+                            let tray_items = build_tray_items(state);
+                            let filtered =
+                                get_filtered_tray_items(&tray_items, &state.tab_tray.search_query);
+                            if let Some(item) = filtered.get(clicked_idx) {
+                                let target_ws = item.workspace_id;
+                                let target_pid = item.pane_id;
+                                state.tab_tray.is_open = false;
+                                state.layout_mgr.switch_workspace(target_ws);
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(target_pid);
+                            }
+                        }
+                        return false;
+                    }
+
+                    // 3. Content area
+                    let content_x = if state.tab_tray.is_open { tray_w } else { 0 };
+                    let content_w = state.term_width.saturating_sub(content_x);
+                    let content_h = state.term_height.saturating_sub(1);
+                    let content_area = Rect {
+                        x: content_x,
+                        y: 0,
+                        width: content_w,
+                        height: content_h,
+                    };
+
+                    if state.layout_mgr.active_workspace().all_panes().is_empty() {
+                        return execute_action(state, Action::SpawnShell);
+                    } else if let Some(hit) =
+                        state
+                            .layout_mgr
+                            .active_workspace()
+                            .hit_test(content_area, col, row)
+                    {
                         state.layout_mgr.active_workspace_mut().focused_pane = Some(hit);
                     }
                 }
@@ -804,6 +1033,8 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::Resize { width, height } => {
+            state.term_width = width;
+            state.term_height = height;
             for pane in state.panes.values_mut() {
                 pane.on_resize(width, height);
             }
@@ -815,7 +1046,10 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
 
 fn execute_action(state: &mut AppState, action: Action) -> bool {
     match action {
-        Action::Quit => return true,
+        Action::Quit => {
+            save_session_to_disk(state);
+            return true;
+        }
         Action::ToggleTabTray => {
             state.tab_tray.is_open = !state.tab_tray.is_open;
         }
@@ -868,6 +1102,15 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 HashMap::new()
             };
 
+            let (w, h) = if state.term_width > 0 && state.term_height > 0 {
+                (
+                    state.term_width.saturating_sub(2),
+                    state.term_height.saturating_sub(4),
+                )
+            } else {
+                (80, 24)
+            };
+
             if let Ok(new_pane) = PtyPane::spawn(
                 new_id,
                 format!("Shell-{}", new_id.0),
@@ -876,8 +1119,8 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 &[],
                 &env,
                 std::env::current_dir().ok(),
-                80,
-                24,
+                w,
+                h,
                 state.config.scrollback_lines,
                 state.event_tx.clone(),
             ) {
@@ -908,6 +1151,14 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 .layout_mgr
                 .add_workspace(format!("WS-{}", state.layout_mgr.workspaces().len() + 1));
             let new_pid = state.allocate_pane_id();
+            let (w, h) = if state.term_width > 0 && state.term_height > 0 {
+                (
+                    state.term_width.saturating_sub(2),
+                    state.term_height.saturating_sub(4),
+                )
+            } else {
+                (80, 24)
+            };
             if let Ok(new_pane) = PtyPane::spawn(
                 new_pid,
                 "Shell".into(),
@@ -916,8 +1167,8 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 &[],
                 &HashMap::new(),
                 std::env::current_dir().ok(),
-                80,
-                24,
+                w,
+                h,
                 state.config.scrollback_lines,
                 state.event_tx.clone(),
             ) {
@@ -1066,4 +1317,70 @@ fn dirs_or_home() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn save_session_to_disk(state: &AppState) {
+    let session_path = dirs_or_home()
+        .join(".config")
+        .join("tag")
+        .join("session.json");
+    let mut saved = SavedSession::new(state.layout_mgr.active_workspace_id());
+    for ws in state.layout_mgr.workspaces() {
+        saved.workspaces.push(SavedWorkspace::from(ws));
+    }
+    for (&pid, pane) in &state.panes {
+        saved.panes.insert(
+            pid,
+            SavedPane {
+                id: pid,
+                title: pane.title(),
+                kind: pane.kind(),
+                cwd: pane.cwd(),
+            },
+        );
+    }
+    let _ = saved.save_to_file(&session_path);
+}
+
+fn build_tray_items(state: &AppState) -> Vec<TrayItem> {
+    let mut tray_items = Vec::new();
+    for ws in state.layout_mgr.workspaces() {
+        for pid in ws.all_panes() {
+            if let Some(p) = state.panes.get(&pid) {
+                tray_items.push(TrayItem {
+                    pane_id: pid,
+                    workspace_id: ws.id,
+                    workspace_name: ws.name.clone(),
+                    title: p.title(),
+                    icon: p.kind().icon(),
+                    branch: p.branch(),
+                    status: p.agent_status().unwrap_or("running"),
+                    is_visible: ws.id == state.layout_mgr.active_workspace_id(),
+                    needs_attention: false,
+                });
+            }
+        }
+    }
+    tray_items
+}
+
+fn get_filtered_tray_items<'a>(items: &'a [TrayItem], query: &str) -> Vec<&'a TrayItem> {
+    items
+        .iter()
+        .filter(|item| {
+            if query.is_empty() {
+                true
+            } else {
+                let q = query.to_lowercase();
+                item.title.to_lowercase().contains(&q)
+                    || item.workspace_name.to_lowercase().contains(&q)
+                    || item
+                        .branch
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&q)
+            }
+        })
+        .collect()
 }

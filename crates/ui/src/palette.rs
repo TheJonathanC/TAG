@@ -47,7 +47,7 @@ pub fn render_command_palette(
     frame.render_widget(Clear, modal_area);
 
     let block = Block::default()
-        .title(" 🚀 Command Palette (Esc to close) ")
+        .title(" Command Palette (Esc to close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -99,7 +99,7 @@ pub fn render_command_palette(
         let is_selected = idx == state.selected_index;
         let mut spans = Vec::new();
 
-        let prefix = if is_selected { " ▶ " } else { "   " };
+        let prefix = if is_selected { "> " } else { "  " };
         spans.push(Span::raw(prefix));
 
         spans.push(Span::styled(

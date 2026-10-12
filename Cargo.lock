@@ -2404,8 +2404,10 @@ dependencies = [
 name = "tag-layout"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ratatui",
  "serde",
+ "serde_json",
  "tag-core",
  "thiserror 2.0.21",
  "tracing",
