@@ -222,7 +222,7 @@ impl Pane for PtyPane {
 
     fn kind(&self) -> PaneKind {
         #[cfg(target_os = "linux")]
-        if self.kind == PaneKind::Shell {
+        if self.kind != PaneKind::Tmux {
             if let Some(pid) = self.child_pid {
                 if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
                     let cmd_name = std::path::Path::new(&cmd)
@@ -249,15 +249,35 @@ impl Pane for PtyPane {
     }
 
     fn scroll(&mut self, delta: i32) {
+        let (cursor_col, cursor_row) = self.vt.cursor_position();
+        let col = if cursor_col > 0 && cursor_col <= self.width {
+            cursor_col + 1
+        } else {
+            (self.width / 2).max(1)
+        };
+        let row = if cursor_row > 0 && cursor_row < self.height.saturating_sub(1) {
+            cursor_row + 1
+        } else {
+            (self.height / 2).max(1)
+        };
+        self.scroll_at(delta, col, row);
+    }
+
+    fn scroll_at(&mut self, delta: i32, col: u16, row: u16) {
         if self.vt.is_alternate() {
             let mouse_mode = self.vt.mouse_protocol_mode();
-            if mouse_mode != vt100::MouseProtocolMode::None {
-                let encoding = self.vt.mouse_protocol_encoding();
-                let (cursor_col, cursor_row) = self.vt.cursor_position();
-                let col = (cursor_col + 1).max(1);
-                let row = (cursor_row + 1).max(1);
+            let encoding = self.vt.mouse_protocol_encoding();
+            let is_tmux = self.kind() == PaneKind::Tmux
+                || self.command.as_deref() == Some("tmux")
+                || self.title.starts_with("tmux");
+
+            if mouse_mode != vt100::MouseProtocolMode::None || is_tmux {
                 let code = if delta > 0 { 64 } else { 65 };
-                let count = delta.unsigned_abs() as usize;
+                let count = if delta.abs() <= 3 {
+                    1
+                } else {
+                    (delta.abs() / 3).max(1) as usize
+                };
 
                 for _ in 0..count {
                     match encoding {
@@ -266,10 +286,15 @@ impl Pane for PtyPane {
                             self.write_bytes(seq.as_bytes());
                         }
                         vt100::MouseProtocolEncoding::Default => {
-                            let cb = (code + 32) as u8;
-                            let cx = (col.min(223) + 32) as u8;
-                            let cy = (row.min(223) + 32) as u8;
-                            self.write_bytes(&[0x1b, b'[', b'M', cb, cx, cy]);
+                            if is_tmux && mouse_mode == vt100::MouseProtocolMode::None {
+                                let seq = format!("\x1b[<{};{};{}M", code, col, row);
+                                self.write_bytes(seq.as_bytes());
+                            } else {
+                                let cb = (code + 32) as u8;
+                                let cx = (col.min(223) + 32) as u8;
+                                let cy = (row.min(223) + 32) as u8;
+                                self.write_bytes(&[0x1b, b'[', b'M', cb, cx, cy]);
+                            }
                         }
                         _ => {
                             let seq = format!("\x1b[<{};{};{}M", code, col, row);

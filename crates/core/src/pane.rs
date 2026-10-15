@@ -57,6 +57,9 @@ pub trait Pane: Send + Sync {
 
     // Scrolling & selection
     fn scroll(&mut self, _delta: i32) {}
+    fn scroll_at(&mut self, delta: i32, _col: u16, _row: u16) {
+        self.scroll(delta);
+    }
     fn scroll_to_bottom(&mut self) {}
     fn scroll_offset(&self) -> usize {
         0

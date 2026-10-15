@@ -74,6 +74,16 @@ impl AgentPane {
         scrollback_capacity: usize,
         event_tx: UnboundedSender<AppEvent>,
     ) -> Result<Self, anyhow::Error> {
+        let _ = std::process::Command::new("tmux")
+            .args(["start-server"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "mouse", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-t", session_name, "mouse", "on"])
+            .status();
+
         let env = HashMap::new();
         let args = vec![
             "new-session".to_string(),
@@ -209,6 +219,10 @@ impl Pane for AgentPane {
 
     fn scroll(&mut self, delta: i32) {
         self.pty.scroll(delta);
+    }
+
+    fn scroll_at(&mut self, delta: i32, col: u16, row: u16) {
+        self.pty.scroll_at(delta, col, row);
     }
 
     fn scroll_to_bottom(&mut self) {

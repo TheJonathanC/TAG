@@ -267,6 +267,14 @@ async fn run_app(
         }
     });
 
+    // Ensure tmux has mouse mode globally enabled if tmux is installed
+    let _ = std::process::Command::new("tmux")
+        .args(["start-server"])
+        .status();
+    let _ = std::process::Command::new("tmux")
+        .args(["set-option", "-g", "mouse", "on"])
+        .status();
+
     // Initialize state
     let config = Config::default();
     let theme = Theme::from_config(config.theme.clone());
@@ -1110,6 +1118,19 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                 return false;
             }
 
+            if state.help_open {
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        state.help_scroll += 3;
+                    }
+                    MouseEventKind::ScrollUp => {
+                        state.help_scroll = state.help_scroll.saturating_sub(3);
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
             let tray_w = if state.tab_tray.is_open {
                 (state.term_width * 25 / 100)
                     .clamp(24, 45)
@@ -1117,6 +1138,27 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             } else {
                 0
             };
+
+            if state.tab_tray.is_open && mouse.column < tray_w {
+                let tray_items = build_tray_items(state);
+                let filtered = get_filtered_tray_items(&tray_items, &state.tab_tray.search_query);
+                let count = filtered.len();
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        if count > 0 {
+                            state.tab_tray.selected_index =
+                                (state.tab_tray.selected_index + 1).min(count - 1);
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        state.tab_tray.selected_index =
+                            state.tab_tray.selected_index.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
             let content_w = state.term_width.saturating_sub(tray_w);
             let content_h = state.term_height.saturating_sub(1);
             let content_area = Rect {
@@ -1134,8 +1176,28 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                         .hit_test(content_area, mouse.column, mouse.row)
                         .or(state.layout_mgr.active_workspace().focused_pane);
                     if let Some(pid) = target_id {
+                        let pane_rects = state
+                            .layout_mgr
+                            .active_workspace()
+                            .compute_rects(content_area);
+                        let (col, row) = if let Some(rect) = pane_rects.get(&pid) {
+                            let inner_w = rect.width.saturating_sub(2).max(1);
+                            let inner_h = rect.height.saturating_sub(2).max(1);
+                            let inner_x = rect.x + 1;
+                            let inner_y = rect.y + 1;
+                            let c = mouse.column.saturating_sub(inner_x) + 1;
+                            let r = mouse.row.saturating_sub(inner_y) + 1;
+                            let max_r = if inner_h > 1 {
+                                inner_h.saturating_sub(1)
+                            } else {
+                                1
+                            };
+                            (c.clamp(1, inner_w), r.clamp(1, max_r))
+                        } else {
+                            (1, 1)
+                        };
                         if let Some(pane) = state.panes.get_mut(&pid) {
-                            pane.scroll(3);
+                            pane.scroll_at(3, col, row);
                         }
                     }
                 }
@@ -1146,8 +1208,28 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                         .hit_test(content_area, mouse.column, mouse.row)
                         .or(state.layout_mgr.active_workspace().focused_pane);
                     if let Some(pid) = target_id {
+                        let pane_rects = state
+                            .layout_mgr
+                            .active_workspace()
+                            .compute_rects(content_area);
+                        let (col, row) = if let Some(rect) = pane_rects.get(&pid) {
+                            let inner_w = rect.width.saturating_sub(2).max(1);
+                            let inner_h = rect.height.saturating_sub(2).max(1);
+                            let inner_x = rect.x + 1;
+                            let inner_y = rect.y + 1;
+                            let c = mouse.column.saturating_sub(inner_x) + 1;
+                            let r = mouse.row.saturating_sub(inner_y) + 1;
+                            let max_r = if inner_h > 1 {
+                                inner_h.saturating_sub(1)
+                            } else {
+                                1
+                            };
+                            (c.clamp(1, inner_w), r.clamp(1, max_r))
+                        } else {
+                            (1, 1)
+                        };
                         if let Some(pane) = state.panes.get_mut(&pid) {
-                            pane.scroll(-3);
+                            pane.scroll_at(-3, col, row);
                         }
                     }
                 }

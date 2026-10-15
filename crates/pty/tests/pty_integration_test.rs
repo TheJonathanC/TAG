@@ -50,3 +50,43 @@ async fn test_real_pty_spawn_and_output() {
     // Test resize
     pane.on_resize(120, 40);
 }
+
+#[test]
+fn test_vt_alternate_and_mouse() {
+    let mut parser = vt100::Parser::new(24, 80, 0);
+    assert!(!parser.screen().alternate_screen());
+
+    // Enter alternate screen: ESC [ ? 1049 h
+    parser.process(b"\x1b[?1049h");
+    assert!(parser.screen().alternate_screen());
+
+    // Enable mouse mode: ESC [ ? 1000 h
+    parser.process(b"\x1b[?1000h");
+    assert_ne!(
+        parser.screen().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::None
+    );
+
+    // Enable SGR mouse encoding: ESC [ ? 1006 h
+    parser.process(b"\x1b[?1006h");
+    assert_eq!(
+        parser.screen().mouse_protocol_encoding(),
+        vt100::MouseProtocolEncoding::Sgr
+    );
+}
+
+#[test]
+fn test_vt_scrollback() {
+    let mut parser = vt100::Parser::new(5, 40, 100);
+    for i in 1..=20 {
+        parser.process(format!("Line {}\r\n", i).as_bytes());
+    }
+
+    // Default screen shows latest lines (16 to 20)
+    let cell_content = parser.screen().cell(0, 0).unwrap().contents();
+    assert!(cell_content.starts_with("L"));
+
+    // Scroll up by 5 lines
+    parser.set_scrollback(5);
+    assert_eq!(parser.screen().scrollback(), 5);
+}
