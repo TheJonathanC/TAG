@@ -85,6 +85,11 @@ impl PtyPane {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("COCKPIT_PANE_ID", id.0.to_string());
+        cmd.env("TAG_ACTIVE", "1");
+        cmd.env("TAG_PANE_ID", id.0.to_string());
+        if let Ok(sock) = std::env::var("COCKPIT_SOCK") {
+            cmd.env("COCKPIT_SOCK", sock);
+        }
 
         let child = pair.slave.spawn_command(cmd)?;
         let child_pid = child.process_id();

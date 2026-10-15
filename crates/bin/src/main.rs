@@ -109,6 +109,13 @@ async fn main() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
+    // Guard against running TAG inside an existing TAG session
+    if is_inside_tag() {
+        eprintln!("Error: Cannot launch TAG from within an active TAG session.");
+        eprintln!("Nested TAG instances are disabled to prevent terminal state conflicts.");
+        std::process::exit(1);
+    }
+
     // Set up file logger (tracing to file, NEVER stdout/stderr)
     let log_dir = std::env::temp_dir();
     let file_appender = tracing_appender::rolling::daily(&log_dir, "tag.log");
@@ -168,6 +175,49 @@ fn setup_panic_hook() {
         );
         default_hook(info);
     }));
+}
+
+fn is_inside_tag() -> bool {
+    // 1. Check environment variables injected into child PTYs
+    if std::env::var("TAG_ACTIVE").is_ok()
+        || std::env::var("COCKPIT_PANE_ID").is_ok()
+        || std::env::var("TAG_PANE_ID").is_ok()
+    {
+        return true;
+    }
+
+    // 2. Check process ancestor tree on Linux
+    #[cfg(target_os = "linux")]
+    {
+        let mut current_pid = std::process::id();
+        for _ in 0..15 {
+            if let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", current_pid)) {
+                if let Some(rparen) = stat.rfind(')') {
+                    let rest = &stat[rparen + 1..];
+                    let fields: Vec<&str> = rest.split_whitespace().collect();
+                    if fields.len() >= 2 {
+                        if let Ok(ppid) = fields[1].parse::<u32>() {
+                            if ppid <= 1 {
+                                break;
+                            }
+                            if let Ok(comm) =
+                                std::fs::read_to_string(format!("/proc/{}/comm", ppid))
+                            {
+                                if comm.trim() == "tag" {
+                                    return true;
+                                }
+                            }
+                            current_pid = ppid;
+                            continue;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    false
 }
 
 async fn run_app(
