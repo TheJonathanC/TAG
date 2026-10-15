@@ -43,6 +43,8 @@ pub struct PtyPane {
     command: Option<String>,
     args: Vec<String>,
     is_zoomed: bool,
+    cached_process_kind: Mutex<Option<(PaneKind, std::time::Instant)>>,
+    cached_tmux_agent: Mutex<Option<(String, Option<String>, std::time::Instant)>>,
 }
 
 impl PtyPane {
@@ -162,6 +164,8 @@ impl PtyPane {
             command,
             args: args.to_vec(),
             is_zoomed: false,
+            cached_process_kind: Mutex::new(None),
+            cached_tmux_agent: Mutex::new(None),
         })
     }
 
@@ -217,6 +221,54 @@ impl PtyPane {
         }
         None
     }
+    pub fn cached_detect_tmux_agent(&self, session: &str) -> Option<String> {
+        if let Ok(mut cache) = self.cached_tmux_agent.lock() {
+            if let Some((ref sess, ref agent, ts)) = *cache {
+                if sess == session && ts.elapsed() < std::time::Duration::from_millis(2000) {
+                    return agent.clone();
+                }
+            }
+            let agent = detect_agent_in_tmux(session);
+            *cache = Some((
+                session.to_string(),
+                agent.clone(),
+                std::time::Instant::now(),
+            ));
+            agent
+        } else {
+            detect_agent_in_tmux(session)
+        }
+    }
+
+    fn compute_kind(&self) -> PaneKind {
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = self.child_pid {
+            if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
+                let cmd_name = std::path::Path::new(&cmd)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&cmd);
+                if cmd_name == "tmux" {
+                    if let Some(session) = self.tmux_session_name() {
+                        if self.cached_detect_tmux_agent(&session).is_some() {
+                            return PaneKind::Agent;
+                        }
+                    }
+                    return PaneKind::Tmux;
+                } else if is_known_agent(cmd_name) {
+                    return PaneKind::Agent;
+                }
+            }
+        }
+        if self.kind == PaneKind::Tmux {
+            if let Some(session) = self.tmux_session_name() {
+                if self.cached_detect_tmux_agent(&session).is_some() {
+                    return PaneKind::Agent;
+                }
+            }
+        }
+        self.kind
+    }
 }
 
 impl Pane for PtyPane {
@@ -227,7 +279,7 @@ impl Pane for PtyPane {
     fn title(&self) -> String {
         if self.kind == PaneKind::Tmux || self.title.starts_with("tmux:") {
             if let Some(session) = self.tmux_session_name() {
-                if let Some(agent) = detect_agent_in_tmux(&session) {
+                if let Some(agent) = self.cached_detect_tmux_agent(&session) {
                     return format!("tmux: {} ({})", session, agent);
                 }
             }
@@ -244,33 +296,18 @@ impl Pane for PtyPane {
     }
 
     fn kind(&self) -> PaneKind {
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = self.child_pid {
-            if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
-                let cmd_name = std::path::Path::new(&cmd)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(&cmd);
-                if cmd_name == "tmux" {
-                    if let Some(session) = self.tmux_session_name() {
-                        if detect_agent_in_tmux(&session).is_some() {
-                            return PaneKind::Agent;
-                        }
-                    }
-                    return PaneKind::Tmux;
-                } else if is_known_agent(cmd_name) {
-                    return PaneKind::Agent;
+        if let Ok(mut cache) = self.cached_process_kind.lock() {
+            if let Some((k, ts)) = *cache {
+                if ts.elapsed() < std::time::Duration::from_millis(1500) {
+                    return k;
                 }
             }
+            let computed = self.compute_kind();
+            *cache = Some((computed, std::time::Instant::now()));
+            computed
+        } else {
+            self.compute_kind()
         }
-        if self.kind == PaneKind::Tmux {
-            if let Some(session) = self.tmux_session_name() {
-                if detect_agent_in_tmux(&session).is_some() {
-                    return PaneKind::Agent;
-                }
-            }
-        }
-        self.kind
     }
 
     fn is_active(&self) -> bool {
@@ -542,7 +579,7 @@ impl Pane for PtyPane {
             return Some(status);
         }
         if let Some(session) = self.tmux_session_name() {
-            if detect_agent_in_tmux(&session).is_some() {
+            if self.cached_detect_tmux_agent(&session).is_some() {
                 return Some("running");
             }
         }
@@ -615,7 +652,21 @@ fn get_foreground_process(shell_pid: u32) -> Option<(String, Vec<String>, PathBu
     Some((cmd, args, cwd))
 }
 
+type TmuxAgentCache =
+    Mutex<std::collections::HashMap<String, (Option<String>, std::time::Instant)>>;
+
 pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
+    static TMUX_CACHE: std::sync::LazyLock<TmuxAgentCache> =
+        std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+    if let Ok(cache) = TMUX_CACHE.lock() {
+        if let Some((agent, ts)) = cache.get(session_name) {
+            if ts.elapsed() < std::time::Duration::from_millis(2000) {
+                return agent.clone();
+            }
+        }
+    }
+
     let output = std::process::Command::new("tmux")
         .args([
             "list-panes",
@@ -631,13 +682,23 @@ pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout);
+    let mut detected = None;
     for line in text.lines() {
         let cmd = line.trim();
         if is_known_agent(cmd) {
-            return Some(cmd.to_string());
+            detected = Some(cmd.to_string());
+            break;
         }
     }
-    None
+
+    if let Ok(mut cache) = TMUX_CACHE.lock() {
+        cache.insert(
+            session_name.to_string(),
+            (detected.clone(), std::time::Instant::now()),
+        );
+    }
+
+    detected
 }
 
 pub fn is_known_agent(cmd: &str) -> bool {

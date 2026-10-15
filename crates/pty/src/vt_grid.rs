@@ -93,15 +93,31 @@ impl VtGrid {
         let mut lines = Vec::with_capacity(visible_rows);
         for row in 0..visible_rows {
             let mut spans = Vec::new();
+            let mut current_style: Option<Style> = None;
+            let mut current_text = String::new();
+
             for col in 0..cols {
                 if let Some(cell) = screen.cell(row as u16, col) {
                     let style = convert_vt_style(cell);
                     let s = cell.contents();
-                    if !s.is_empty() {
-                        spans.push(Span::styled(s.to_string(), style));
+                    let ch = if !s.is_empty() { s.as_str() } else { " " };
+
+                    if current_style == Some(style) {
+                        current_text.push_str(ch);
                     } else {
-                        spans.push(Span::styled(" ", style));
+                        if !current_text.is_empty() {
+                            if let Some(st) = current_style {
+                                spans.push(Span::styled(std::mem::take(&mut current_text), st));
+                            }
+                        }
+                        current_style = Some(style);
+                        current_text.push_str(ch);
                     }
+                }
+            }
+            if !current_text.is_empty() {
+                if let Some(st) = current_style {
+                    spans.push(Span::styled(current_text, st));
                 }
             }
             lines.push(RatLine::from(spans));

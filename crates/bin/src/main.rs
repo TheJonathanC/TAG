@@ -213,6 +213,13 @@ enum Commands {
     Status,
 }
 
+struct CachedGitData {
+    worktrees: Vec<tag_git::WorktreeInfo>,
+    repo_status: tag_git::RepoStatus,
+    diff: String,
+    loaded_at: std::time::Instant,
+}
+
 struct AppState {
     panes: HashMap<PaneId, Box<dyn Pane>>,
     next_pane_id: u32,
@@ -244,6 +251,23 @@ struct AppState {
     is_dirty: bool,
     term_width: u16,
     term_height: u16,
+    cached_usage_summary: Option<String>,
+    last_usage_query: std::time::Instant,
+    git_cache: Option<CachedGitData>,
+}
+
+impl AppState {
+    fn update_usage_summary(&mut self) {
+        let today_usage = self.usage_store.query_today().ok();
+        self.cached_usage_summary = today_usage.map(|u| {
+            format!(
+                "{:.3}k tok (${:.3})",
+                u.input_tokens as f64 / 1000.0,
+                u.estimated_cost_usd
+            )
+        });
+        self.last_usage_query = std::time::Instant::now();
+    }
 }
 
 #[tokio::main]
@@ -463,10 +487,10 @@ async fn run_app(
         }
     });
 
-    // Spawn tick interval (60 fps frame loop ~16ms)
+    // Spawn tick interval (100ms for animations and toast expiry)
     let tick_tx = event_tx.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(16));
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
         loop {
             interval.tick().await;
             if tick_tx.send(AppEvent::Tick).is_err() {
@@ -475,13 +499,15 @@ async fn run_app(
         }
     });
 
-    // Ensure tmux has mouse mode globally enabled if tmux is installed
-    let _ = std::process::Command::new("tmux")
-        .args(["start-server"])
-        .status();
-    let _ = std::process::Command::new("tmux")
-        .args(["set-option", "-g", "mouse", "on"])
-        .status();
+    // Ensure tmux has mouse mode globally enabled if tmux is installed (asynchronously)
+    tokio::task::spawn_blocking(|| {
+        let _ = std::process::Command::new("tmux")
+            .args(["start-server"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "mouse", "on"])
+            .status();
+    });
 
     // Initialize state
     let config = load_app_config();
@@ -525,7 +551,11 @@ async fn run_app(
         is_dirty: true,
         term_width: 80,
         term_height: 24,
+        cached_usage_summary: None,
+        last_usage_query: std::time::Instant::now(),
+        git_cache: None,
     };
+    state.update_usage_summary();
 
     let term_size = terminal.size()?;
     state.term_width = term_size.width;
@@ -593,7 +623,19 @@ async fn run_app(
             None => break,
         };
 
-        let should_quit = handle_app_event(&mut state, event);
+        let mut should_quit = handle_app_event(&mut state, event);
+        if should_quit {
+            save_session_to_disk(&state);
+            break;
+        }
+
+        // Batch-drain all pending events in queue before redrawing
+        while let Ok(next_ev) = event_rx.try_recv() {
+            should_quit = handle_app_event(&mut state, next_ev);
+            if should_quit {
+                break;
+            }
+        }
         if should_quit {
             save_session_to_disk(&state);
             break;
@@ -690,15 +732,6 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     }
 
     // 3. Render Status Bar
-    let today_usage = state.usage_store.query_today().ok();
-    let usage_summary = today_usage.map(|u| {
-        format!(
-            "{:.3}k tok (${:.3})",
-            u.input_tokens as f64 / 1000.0,
-            u.estimated_cost_usd
-        )
-    });
-
     render_status_bar(
         frame,
         status_area,
@@ -707,7 +740,7 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             key_state: state.key_state_machine.state(),
             dnd_active: state.dnd_active,
             attention_count: state.attention_queue.count(),
-            token_usage_summary: usage_summary.as_deref(),
+            token_usage_summary: state.cached_usage_summary.as_deref(),
             theme: &state.theme,
         },
     );
@@ -758,27 +791,41 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     }
 
     if state.git_state.is_open {
-        let worktrees = state
-            .git_backend
-            .list_worktrees(&PathBuf::from("."))
-            .unwrap_or_default();
-        let repo_status = state
-            .git_backend
-            .repo_status(&PathBuf::from("."))
-            .unwrap_or_default();
-        let diff = state
-            .git_backend
-            .get_diff(&PathBuf::from("."))
-            .unwrap_or_default();
-        tag_git::render_git_overlay(
-            frame,
-            size,
-            &worktrees,
-            &repo_status,
-            &diff,
-            &state.git_state,
-            &state.theme,
-        );
+        let needs_reload = match &state.git_cache {
+            Some(cache) => cache.loaded_at.elapsed() > std::time::Duration::from_secs(3),
+            None => true,
+        };
+        if needs_reload {
+            let worktrees = state
+                .git_backend
+                .list_worktrees(&PathBuf::from("."))
+                .unwrap_or_default();
+            let repo_status = state
+                .git_backend
+                .repo_status(&PathBuf::from("."))
+                .unwrap_or_default();
+            let diff = state
+                .git_backend
+                .get_diff(&PathBuf::from("."))
+                .unwrap_or_default();
+            state.git_cache = Some(CachedGitData {
+                worktrees,
+                repo_status,
+                diff,
+                loaded_at: std::time::Instant::now(),
+            });
+        }
+        if let Some(ref cache) = state.git_cache {
+            tag_git::render_git_overlay(
+                frame,
+                size,
+                &cache.worktrees,
+                &cache.repo_status,
+                &cache.diff,
+                &state.git_state,
+                &state.theme,
+            );
+        }
     }
 
     if state.snippet_state.is_open {
@@ -807,17 +854,20 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
 }
 
 fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
-    state.is_dirty = true;
-
     match event {
-        AppEvent::Action(action) => execute_action(state, action),
+        AppEvent::Action(action) => {
+            state.is_dirty = true;
+            execute_action(state, action)
+        }
         AppEvent::PtyOutput { pane_id, data } => {
+            state.is_dirty = true;
             if let Some(pane) = state.panes.get_mut(&pane_id) {
                 let _ = pane.handle_event(&AppEvent::PtyOutput { pane_id, data });
             }
             false
         }
         AppEvent::PtyExited { pane_id, exit_code } => {
+            state.is_dirty = true;
             if let Some(pane) = state.panes.get_mut(&pane_id) {
                 let _ = pane.handle_event(&AppEvent::PtyExited { pane_id, exit_code });
             }
@@ -830,6 +880,7 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::AgentHook(payload) => {
+            state.is_dirty = true;
             info!("Agent hook event received: {:?}", payload.event);
             let _item_id = state.attention_queue.push(
                 payload.pane_id,
@@ -865,9 +916,11 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                     let _ = pane.handle_event(&AppEvent::AgentHook(payload));
                 }
             }
+            state.update_usage_summary();
             false
         }
         AppEvent::TerminalInput(CrossEvent::Key(key)) => {
+            state.is_dirty = true;
             // Check rename modal prompt first
             if let Some(ref mut rename) = state.rename_prompt {
                 match key.code {
@@ -1356,6 +1409,7 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::TerminalInput(CrossEvent::Mouse(mouse)) => {
+            state.is_dirty = true;
             if state.palette.is_open {
                 let matched_count =
                     get_matched_commands(&state.command_registry, &state.palette.query).len();
@@ -1627,14 +1681,25 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             false
         }
         AppEvent::Tick => {
-            // Expire toasts older than duration
             let now = chrono::Utc::now();
+            let before = state.toasts.len();
             state.toasts.retain(|t| {
                 now.signed_duration_since(t.created_at).num_seconds() < t.duration_secs as i64
             });
+            if before != state.toasts.len() || state.tour.is_active {
+                state.is_dirty = true;
+            }
+            if state.last_usage_query.elapsed() >= std::time::Duration::from_secs(3) {
+                let old_summary = state.cached_usage_summary.clone();
+                state.update_usage_summary();
+                if old_summary != state.cached_usage_summary {
+                    state.is_dirty = true;
+                }
+            }
             false
         }
         AppEvent::Resize { width, height } => {
+            state.is_dirty = true;
             state.term_width = width;
             state.term_height = height;
             for pane in state.panes.values_mut() {
@@ -1677,6 +1742,9 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleGitOverlay => {
             state.git_state.is_open = !state.git_state.is_open;
+            if state.git_state.is_open {
+                state.git_cache = None;
+            }
         }
         Action::ToggleSnippetOverlay => {
             state.snippet_state.is_open = !state.snippet_state.is_open;
