@@ -1116,6 +1116,15 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                                 StatusBarClickTarget::Workspace(idx) => {
                                     state.layout_mgr.switch_workspace_index(idx);
                                 }
+                                StatusBarClickTarget::CloseWorkspace(idx) => {
+                                    if let Some(ws) = state.layout_mgr.workspaces().get(idx) {
+                                        let ws_id = ws.id;
+                                        return execute_action(
+                                            state,
+                                            Action::CloseWorkspace(ws_id),
+                                        );
+                                    }
+                                }
                                 StatusBarClickTarget::AddWorkspace => {
                                     return execute_action(state, Action::NewWorkspace);
                                 }
@@ -1364,6 +1373,35 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     .active_workspace_mut()
                     .add_initial_pane(new_pid);
             }
+        }
+        Action::CloseWorkspace(ws_id) => {
+            if state.layout_mgr.workspaces().len() <= 1 {
+                state.toasts.push(Toast {
+                    title: "Workspace".into(),
+                    message: "Cannot close the only remaining workspace.".into(),
+                    level: ToastLevel::Warning,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+                return false;
+            }
+            let (closed, pids) = state.layout_mgr.close_workspace(ws_id);
+            if closed {
+                for pid in &pids {
+                    state.panes.remove(pid);
+                }
+                state.toasts.push(Toast {
+                    title: "Workspace Closed".into(),
+                    message: format!("Closed workspace and terminated {} pane(s).", pids.len()),
+                    level: ToastLevel::Info,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+            }
+        }
+        Action::CloseActiveWorkspace => {
+            let active_id = state.layout_mgr.active_workspace_id();
+            return execute_action(state, Action::CloseWorkspace(active_id));
         }
         Action::Focus(dir) => {
             // Move focus between panes

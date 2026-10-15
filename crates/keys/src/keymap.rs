@@ -119,6 +119,7 @@ impl Keymap {
         leader_bindings.insert('l', (Action::Focus(Direction::Right), "Focus right"));
         leader_bindings.insert('c', (Action::SpawnShell, "New shell pane"));
         leader_bindings.insert('w', (Action::NewWorkspace, "New workspace"));
+        leader_bindings.insert('W', (Action::CloseActiveWorkspace, "Close workspace"));
         leader_bindings.insert('b', (Action::ToggleTabTray, "Tab tray"));
         leader_bindings.insert(' ', (Action::ToggleQuickSwitcher, "Quick switcher"));
         leader_bindings.insert('a', (Action::ToggleAttentionQueue, "Attention queue"));
@@ -181,6 +182,10 @@ impl Keymap {
         direct_bindings.insert(
             KeyChord::new(KeyCode::Right, KeyModifiers::ALT),
             (Action::NextWorkspace, "Next workspace"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Char('w'), KeyModifiers::ALT),
+            (Action::CloseActiveWorkspace, "Close workspace"),
         );
         direct_bindings.insert(
             KeyChord::new(KeyCode::F(1), KeyModifiers::empty()),

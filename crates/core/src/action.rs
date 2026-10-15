@@ -36,6 +36,7 @@ pub enum Action {
     Resize(Direction, u16),
     NewWorkspace,
     CloseWorkspace(WorkspaceId),
+    CloseActiveWorkspace,
     UndoLayout,
 
     // Overlays & UI Panels

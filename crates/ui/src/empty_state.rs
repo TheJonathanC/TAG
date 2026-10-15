@@ -12,18 +12,19 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
     }
 
     let ascii_art = [
-        r"  _____     _       ____  ",
-        r" |_   _|   / \     / ___| ",
-        r"   | |    / _ \   | |  _  ",
-        r"   | |   / ___ \  | |_| | ",
-        r"   |_|  /_/   \_\  \____| ",
+        r"  ████████╗  █████╗   ██████╗ ",
+        r"  ╚══██╔══╝ ██╔══██╗ ██╔════╝ ",
+        r"     ██║    ███████║ ██║  ███╗",
+        r"     ██║    ██╔══██║ ██║   ██║",
+        r"     ██║    ██║  ██║ ╚██████╔╝",
+        r"     ╚═╝    ╚═╝  ╚═╝  ╚═════╝ ",
     ];
 
     let mut lines = Vec::new();
 
     // Spacing before logo
     let logo_height = ascii_art.len() as u16;
-    let card_height = 11u16;
+    let card_height = 12u16;
     let total_content_height = logo_height + 2 + card_height;
 
     let top_pad = if area.height > total_content_height {
@@ -49,10 +50,14 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
 
     // Subtitle
     lines.push(
-        Line::from(vec![Span::styled(
-            "Terminal Agent Orchestrator & Multiplexer",
-            theme.text.add_modifier(Modifier::DIM),
-        )])
+        Line::from(vec![
+            Span::styled("// ", theme.accent),
+            Span::styled(
+                "TERMINAL AGENT ORCHESTRATOR & MULTIPLEXER",
+                theme.title_focused.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" //", theme.accent),
+        ])
         .alignment(Alignment::Center),
     );
     lines.push(Line::raw(""));
@@ -96,24 +101,24 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
                 Span::styled("New Terminal Pane", theme.text),
             ]),
             Line::from(vec![
-                Span::styled("  [ Ctrl+Space w ]    ", theme.title_focused),
+                Span::styled("  [ ^Space w ]        ", theme.title_focused),
                 Span::styled("New Workspace", theme.text),
             ]),
             Line::from(vec![
-                Span::styled("  [ Ctrl+Space p ]    ", theme.title_focused),
+                Span::styled("  [ ^Space W ]        ", theme.title_focused),
+                Span::styled("Close Workspace", theme.text),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ ^Space p ]        ", theme.title_focused),
                 Span::styled("Command Palette", theme.text),
             ]),
             Line::from(vec![
-                Span::styled("  [ Ctrl+Space b ]    ", theme.title_focused),
-                Span::styled("Tab Tray", theme.text),
+                Span::styled("  [ ^Space b ]        ", theme.title_focused),
+                Span::styled("Tab Tray Navigator", theme.text),
             ]),
             Line::from(vec![
-                Span::styled("  [ Ctrl+Space ? ]    ", theme.title_focused),
-                Span::styled("Help & Keybindings", theme.text),
-            ]),
-            Line::from(vec![
-                Span::styled("  [ q ]               ", theme.title_focused),
-                Span::styled("Quit TAG", theme.text),
+                Span::styled("  [ ^Space ? ]        ", theme.title_focused),
+                Span::styled("Guide & Keybindings", theme.text),
             ]),
             Line::raw(""),
             Line::from(vec![Span::styled(

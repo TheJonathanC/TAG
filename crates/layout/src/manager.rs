@@ -91,12 +91,32 @@ impl LayoutManager {
         }
     }
 
+    pub fn active_idx(&self) -> usize {
+        self.active_idx
+    }
+
     pub fn add_workspace(&mut self, name: impl Into<String>) -> WorkspaceId {
         let next_id = WorkspaceId(self.workspaces.len() + 1);
         let ws = Workspace::new(next_id, name);
         self.workspaces.push(ws);
         self.active_idx = self.workspaces.len() - 1;
         next_id
+    }
+
+    pub fn close_workspace(&mut self, id: WorkspaceId) -> (bool, Vec<PaneId>) {
+        if self.workspaces.len() <= 1 {
+            return (false, Vec::new());
+        }
+        if let Some(pos) = self.workspaces.iter().position(|w| w.id == id) {
+            let removed = self.workspaces.remove(pos);
+            let panes = removed.all_panes();
+            if self.active_idx >= self.workspaces.len() {
+                self.active_idx = self.workspaces.len().saturating_sub(1);
+            }
+            (true, panes)
+        } else {
+            (false, Vec::new())
+        }
     }
 
     pub fn find_pane_workspace(&self, pane_id: PaneId) -> Option<WorkspaceId> {

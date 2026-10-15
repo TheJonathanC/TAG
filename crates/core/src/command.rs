@@ -68,7 +68,7 @@ impl CommandRegistry {
                 name: "Split Right".into(),
                 category: CommandCategory::Layout,
                 description: "Split current pane vertically (right)".into(),
-                default_shortcut: Some("Leader+|".into()),
+                default_shortcut: Some("^Space+|".into()),
                 action: Action::Split(SplitDirection::Vertical),
             },
             Command {
@@ -76,7 +76,7 @@ impl CommandRegistry {
                 name: "Split Down".into(),
                 category: CommandCategory::Layout,
                 description: "Split current pane horizontally (down)".into(),
-                default_shortcut: Some("Leader+-".into()),
+                default_shortcut: Some("^Space+-".into()),
                 action: Action::Split(SplitDirection::Horizontal),
             },
             Command {
@@ -84,7 +84,7 @@ impl CommandRegistry {
                 name: "Close Pane".into(),
                 category: CommandCategory::Layout,
                 description: "Close the currently focused pane".into(),
-                default_shortcut: Some("Leader+x".into()),
+                default_shortcut: Some("^Space+x".into()),
                 action: Action::ClosePane,
             },
             Command {
@@ -92,15 +92,31 @@ impl CommandRegistry {
                 name: "Maximize / Restore Pane".into(),
                 category: CommandCategory::Layout,
                 description: "Toggle fullscreen zoom on focused pane".into(),
-                default_shortcut: Some("Alt+Enter / Leader+m / Leader+z".into()),
+                default_shortcut: Some("Alt+Enter / ^Space+m".into()),
                 action: Action::ToggleZoom,
+            },
+            Command {
+                id: "layout.new_workspace".into(),
+                name: "New Workspace".into(),
+                category: CommandCategory::Layout,
+                description: "Create a new virtual workspace".into(),
+                default_shortcut: Some("^Space+w".into()),
+                action: Action::NewWorkspace,
+            },
+            Command {
+                id: "layout.close_workspace".into(),
+                name: "Close Active Workspace".into(),
+                category: CommandCategory::Layout,
+                description: "Close the active workspace and terminate its panes".into(),
+                default_shortcut: Some("^Space+W / Alt+w".into()),
+                action: Action::CloseActiveWorkspace,
             },
             Command {
                 id: "pane.rename".into(),
                 name: "Rename Pane".into(),
                 category: CommandCategory::Layout,
                 description: "Change the title of the active pane".into(),
-                default_shortcut: Some("Leader+, / Leader+R".into()),
+                default_shortcut: Some("^Space+,".into()),
                 action: Action::RenamePane(None),
             },
             Command {
@@ -108,7 +124,7 @@ impl CommandRegistry {
                 name: "Undo Layout Change".into(),
                 category: CommandCategory::Layout,
                 description: "Revert the last layout modification".into(),
-                default_shortcut: Some("Leader+Z".into()),
+                default_shortcut: Some("^Space+Z".into()),
                 action: Action::UndoLayout,
             },
             Command {
@@ -116,7 +132,7 @@ impl CommandRegistry {
                 name: "Focus Left".into(),
                 category: CommandCategory::Navigation,
                 description: "Move focus to left pane".into(),
-                default_shortcut: Some("Alt+h / Leader+h".into()),
+                default_shortcut: Some("Alt+h / ^Space+h".into()),
                 action: Action::Focus(Direction::Left),
             },
             Command {
@@ -124,7 +140,7 @@ impl CommandRegistry {
                 name: "Focus Right".into(),
                 category: CommandCategory::Navigation,
                 description: "Move focus to right pane".into(),
-                default_shortcut: Some("Alt+l / Leader+l".into()),
+                default_shortcut: Some("Alt+l / ^Space+l".into()),
                 action: Action::Focus(Direction::Right),
             },
             Command {
@@ -132,7 +148,7 @@ impl CommandRegistry {
                 name: "Focus Up".into(),
                 category: CommandCategory::Navigation,
                 description: "Move focus to upper pane".into(),
-                default_shortcut: Some("Alt+k / Leader+k".into()),
+                default_shortcut: Some("Alt+k / ^Space+k".into()),
                 action: Action::Focus(Direction::Up),
             },
             Command {
@@ -140,7 +156,7 @@ impl CommandRegistry {
                 name: "Focus Down".into(),
                 category: CommandCategory::Navigation,
                 description: "Move focus to lower pane".into(),
-                default_shortcut: Some("Alt+j / Leader+j".into()),
+                default_shortcut: Some("Alt+j / ^Space+j".into()),
                 action: Action::Focus(Direction::Down),
             },
             Command {
@@ -148,7 +164,7 @@ impl CommandRegistry {
                 name: "Toggle Tab Tray".into(),
                 category: CommandCategory::Navigation,
                 description: "Open the cross-workspace tab navigator".into(),
-                default_shortcut: Some("Leader+b".into()),
+                default_shortcut: Some("^Space+b".into()),
                 action: Action::ToggleTabTray,
             },
             Command {
@@ -156,7 +172,7 @@ impl CommandRegistry {
                 name: "Quick Switcher".into(),
                 category: CommandCategory::Navigation,
                 description: "Fuzzy switch between panes and workspaces".into(),
-                default_shortcut: Some("Leader+Space".into()),
+                default_shortcut: Some("^Space+Space".into()),
                 action: Action::ToggleQuickSwitcher,
             },
             Command {
@@ -164,7 +180,7 @@ impl CommandRegistry {
                 name: "Command Palette".into(),
                 category: CommandCategory::Tools,
                 description: "Search and run any command".into(),
-                default_shortcut: Some("Leader+p".into()),
+                default_shortcut: Some("^Space+p".into()),
                 action: Action::ToggleCommandPalette,
             },
             Command {
@@ -172,7 +188,7 @@ impl CommandRegistry {
                 name: "Help Cheat-Sheet".into(),
                 category: CommandCategory::Tools,
                 description: "Contextual shortcut cheat-sheet".into(),
-                default_shortcut: Some("Leader+? / F1".into()),
+                default_shortcut: Some("^Space+? / F1".into()),
                 action: Action::ToggleHelp,
             },
             Command {
@@ -180,7 +196,7 @@ impl CommandRegistry {
                 name: "Attention Queue".into(),
                 category: CommandCategory::Agents,
                 description: "View pending agent notifications and requests".into(),
-                default_shortcut: Some("Leader+a".into()),
+                default_shortcut: Some("^Space+a".into()),
                 action: Action::ToggleAttentionQueue,
             },
             Command {
@@ -188,7 +204,7 @@ impl CommandRegistry {
                 name: "Token Usage & Costs".into(),
                 category: CommandCategory::Agents,
                 description: "View token usage, rolling windows, and estimates".into(),
-                default_shortcut: Some("Leader+u".into()),
+                default_shortcut: Some("^Space+u".into()),
                 action: Action::ToggleUsageOverlay,
             },
             Command {
@@ -196,7 +212,7 @@ impl CommandRegistry {
                 name: "Git Worktrees & Diff".into(),
                 category: CommandCategory::Git,
                 description: "Manage worktrees, inspect status, view diffs".into(),
-                default_shortcut: Some("Leader+g".into()),
+                default_shortcut: Some("^Space+g".into()),
                 action: Action::ToggleGitOverlay,
             },
             Command {
@@ -204,7 +220,7 @@ impl CommandRegistry {
                 name: "Snippet Bank".into(),
                 category: CommandCategory::Tools,
                 description: "Browse and insert templated snippets".into(),
-                default_shortcut: Some("Leader+s".into()),
+                default_shortcut: Some("^Space+s".into()),
                 action: Action::ToggleSnippetOverlay,
             },
             Command {
@@ -212,7 +228,7 @@ impl CommandRegistry {
                 name: "Paste Clipboard Image".into(),
                 category: CommandCategory::Tools,
                 description: "Save clipboard image to cache and insert path".into(),
-                default_shortcut: Some("Leader+i".into()),
+                default_shortcut: Some("^Space+i".into()),
                 action: Action::PasteImageBridge,
             },
             Command {
@@ -220,7 +236,7 @@ impl CommandRegistry {
                 name: "Secrets Vault".into(),
                 category: CommandCategory::Tools,
                 description: "Manage encrypted secrets and env sets".into(),
-                default_shortcut: Some("Leader+v".into()),
+                default_shortcut: Some("^Space+v".into()),
                 action: Action::ToggleVaultOverlay,
             },
             Command {
@@ -228,7 +244,7 @@ impl CommandRegistry {
                 name: "Toggle Do Not Disturb".into(),
                 category: CommandCategory::Tools,
                 description: "Mute non-critical out-of-app notifications".into(),
-                default_shortcut: Some("Leader+n".into()),
+                default_shortcut: Some("^Space+n".into()),
                 action: Action::ToggleDnd,
             },
             Command {
@@ -236,7 +252,7 @@ impl CommandRegistry {
                 name: "Toggle Passthrough Mode".into(),
                 category: CommandCategory::Tools,
                 description: "Send all key inputs directly to the child process".into(),
-                default_shortcut: Some("Leader+Esc".into()),
+                default_shortcut: Some("^Space+Esc".into()),
                 action: Action::TogglePassthrough,
             },
             Command {
@@ -287,7 +303,7 @@ impl CommandRegistry {
                 name: "Quit TAG".into(),
                 category: CommandCategory::System,
                 description: "Exit TAG and restore terminal".into(),
-                default_shortcut: Some("Leader+q".into()),
+                default_shortcut: Some("^Space+q".into()),
                 action: Action::Quit,
             },
             Command {
@@ -295,7 +311,7 @@ impl CommandRegistry {
                 name: "Reload Configuration".into(),
                 category: CommandCategory::System,
                 description: "Reload settings, themes, and keymaps".into(),
-                default_shortcut: Some("Leader+r".into()),
+                default_shortcut: Some("^Space+r".into()),
                 action: Action::ReloadConfig,
             },
             Command {

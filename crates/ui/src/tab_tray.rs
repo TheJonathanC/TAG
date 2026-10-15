@@ -175,7 +175,13 @@ pub fn render_tab_tray(
         width: inner.width,
         height: 1,
     };
-    let hint_text = "j/k move · Enter switch · / search · s/v split · x close · Esc close";
+    let hint_text = if inner.width >= 58 {
+        "j/k move · Enter switch · / search · s/v split · x close"
+    } else if inner.width >= 36 {
+        "Enter open · s/v split · x close"
+    } else {
+        "Enter open · x close"
+    };
     let hint_p = Paragraph::new(hint_text).style(theme.text.add_modifier(Modifier::DIM));
     frame.render_widget(hint_p, hint_area);
 }

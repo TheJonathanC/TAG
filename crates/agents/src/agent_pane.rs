@@ -76,8 +76,9 @@ impl AgentPane {
     ) -> Result<Self, anyhow::Error> {
         let env = HashMap::new();
         let args = vec![
-            "attach".to_string(),
-            "-t".to_string(),
+            "new-session".to_string(),
+            "-A".to_string(),
+            "-s".to_string(),
             session_name.to_string(),
         ];
 

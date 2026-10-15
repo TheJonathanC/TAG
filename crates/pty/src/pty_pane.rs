@@ -216,6 +216,22 @@ impl Pane for PtyPane {
     }
 
     fn kind(&self) -> PaneKind {
+        #[cfg(target_os = "linux")]
+        if self.kind == PaneKind::Shell {
+            if let Some(pid) = self.child_pid {
+                if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
+                    let cmd_name = std::path::Path::new(&cmd)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&cmd);
+                    if cmd_name == "tmux" {
+                        return PaneKind::Tmux;
+                    } else if matches!(cmd_name, "agy" | "claude" | "codex") {
+                        return PaneKind::Agent;
+                    }
+                }
+            }
+        }
         self.kind
     }
 
@@ -352,7 +368,7 @@ impl Pane for PtyPane {
 
         // Construct title bar with metadata and badges
         let mut title_spans = vec![
-            Span::styled(format!(" {} ", self.kind.icon()), theme.text),
+            Span::styled(format!(" {} ", self.kind().icon()), theme.text),
             Span::styled(
                 format!("{} ", self.title),
                 if is_focused {

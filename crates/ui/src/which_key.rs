@@ -19,7 +19,7 @@ pub fn render_which_key(frame: &mut Frame, total_area: Rect, keymap: &Keymap, th
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Leader Chords (Which-Key) ")
+        .title(" ^Space Chords (Which-Key) ")
         .borders(Borders::ALL)
         .border_style(theme.accent);
 
@@ -34,7 +34,8 @@ pub fn render_which_key(frame: &mut Frame, total_area: Rect, keymap: &Keymap, th
     bindings.sort_by_key(|(ch, _)| *ch);
 
     let mut lines = Vec::new();
-    let chunk_size = 4;
+    let col_width = 22usize;
+    let chunk_size = ((inner.width as usize) / col_width).clamp(1, 6);
     for chunk in bindings.chunks(chunk_size) {
         let mut spans = Vec::new();
         for (ch, desc) in chunk {
