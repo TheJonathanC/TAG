@@ -17,6 +17,7 @@ pub struct TrayItem {
     pub branch: Option<String>,
     pub status: &'static str,
     pub is_visible: bool,
+    pub is_minimized: bool,
     pub needs_attention: bool,
 }
 
@@ -145,7 +146,9 @@ pub fn render_tab_tray(
         };
         spans.push(Span::styled(format!("[{}] ", item.status), status_style));
 
-        if item.is_visible {
+        if item.is_minimized {
+            spans.push(Span::styled("[minimized] ", theme.warning));
+        } else if item.is_visible {
             spans.push(Span::styled("[active] ", theme.info));
         }
 
@@ -176,11 +179,11 @@ pub fn render_tab_tray(
         height: 1,
     };
     let hint_text = if inner.width >= 58 {
-        "j/k move · Enter switch · / search · s/v split · x close"
+        "j/k move · Enter open/restore · / search · s/v split · m min · x close"
     } else if inner.width >= 36 {
-        "Enter open · s/v split · x close"
+        "Enter restore · s/v split · m min · x close"
     } else {
-        "Enter open · x close"
+        "Enter restore · x close"
     };
     let hint_p = Paragraph::new(hint_text).style(theme.text.add_modifier(Modifier::DIM));
     frame.render_widget(hint_p, hint_area);

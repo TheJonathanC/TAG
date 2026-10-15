@@ -48,6 +48,8 @@ pub struct Config {
     pub notifications: NotificationConfig,
     pub agents: HashMap<String, AgentProfileConfig>,
     pub custom_keys: HashMap<String, String>,
+    #[serde(default)]
+    pub run_in_background: bool,
 }
 
 impl Default for Config {
@@ -110,6 +112,7 @@ impl Default for Config {
             notifications: NotificationConfig::default(),
             agents,
             custom_keys: HashMap::new(),
+            run_in_background: false,
         }
     }
 }

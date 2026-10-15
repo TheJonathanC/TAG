@@ -108,6 +108,8 @@ impl Keymap {
             (Action::Split(SplitDirection::Horizontal), "Split down"),
         );
         leader_bindings.insert('x', (Action::ClosePane, "Close pane"));
+        leader_bindings.insert('_', (Action::MinimizePane(None), "Minimize pane"));
+        leader_bindings.insert('d', (Action::Detach, "Detach session"));
         leader_bindings.insert('z', (Action::ToggleZoom, "Toggle zoom"));
         leader_bindings.insert('m', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert(',', (Action::RenamePane(None), "Rename pane"));

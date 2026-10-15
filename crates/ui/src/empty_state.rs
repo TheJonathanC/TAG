@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use tag_core::theme::Theme;
 
-pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
+pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme, minimized_count: usize) {
     if area.width < 10 || area.height < 5 {
         return;
     }
@@ -86,16 +86,44 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
             height: card_height,
         };
 
+        let card_title = if minimized_count > 0 {
+            format!(
+                " Workspace Empty ({} Minimized) - Quick Actions ",
+                minimized_count
+            )
+        } else {
+            " Workspace Empty - Quick Actions ".to_string()
+        };
+
         let card_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(theme.border_focused)
-            .title(" Workspace Empty - Quick Actions ");
+            .border_style(if minimized_count > 0 {
+                theme.warning
+            } else {
+                theme.border_focused
+            })
+            .title(card_title);
 
         let inner = card_block.inner(card_area);
         frame.render_widget(card_block, card_area);
 
-        let card_lines = vec![
-            Line::raw(""),
+        let mut card_lines = Vec::new();
+        card_lines.push(Line::raw(""));
+
+        if minimized_count > 0 {
+            card_lines.push(Line::from(vec![
+                Span::styled(
+                    "  [ b ] or [ ^Space b ] ",
+                    theme.warning.add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("Restore Minimized Panes ({})", minimized_count),
+                    theme.warning,
+                ),
+            ]));
+        }
+
+        card_lines.extend(vec![
             Line::from(vec![
                 Span::styled("  [ c ] or [ Enter ]  ", theme.title_focused),
                 Span::styled("New Terminal Pane", theme.text),
@@ -122,10 +150,14 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
             ]),
             Line::raw(""),
             Line::from(vec![Span::styled(
-                "  Click anywhere or press [c] / [Enter] to spawn shell",
+                if minimized_count > 0 {
+                    "  Press [b] to restore minimized panes, or [c] for shell"
+                } else {
+                    "  Click anywhere or press [c] / [Enter] to spawn shell"
+                },
                 theme.info.add_modifier(Modifier::DIM),
             )]),
-        ];
+        ]);
 
         let card_p = Paragraph::new(card_lines);
         frame.render_widget(card_p, inner);

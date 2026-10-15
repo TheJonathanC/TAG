@@ -31,6 +31,8 @@ pub enum Action {
     // Layout Management
     Split(SplitDirection),
     ClosePane,
+    MinimizePane(Option<PaneId>),
+    RestorePane(PaneId),
     ToggleZoom,
     RenamePane(Option<PaneId>),
     Resize(Direction, u16),
@@ -73,6 +75,8 @@ pub enum Action {
 
     // System
     Quit,
+    Detach,
+    ToggleBackgroundMode,
     ReloadConfig,
     StartTour,
 }

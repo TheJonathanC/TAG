@@ -16,6 +16,7 @@ pub struct Workspace {
     pub zoomed_pane: Option<PaneId>,
     pub worktree_binding: Option<PathBuf>,
     pub undo_stack: Vec<LayoutNode>,
+    pub minimized_panes: Vec<PaneId>,
 }
 
 impl Workspace {
@@ -28,6 +29,7 @@ impl Workspace {
             zoomed_pane: None,
             worktree_binding: None,
             undo_stack: Vec::new(),
+            minimized_panes: Vec::new(),
         }
     }
 
@@ -84,6 +86,7 @@ impl Workspace {
 
     pub fn remove_pane(&mut self, pane_id: PaneId) {
         self.save_undo_state();
+        self.minimized_panes.retain(|&p| p != pane_id);
         if let Some(root) = self.root.take() {
             self.root = root.remove_pane(pane_id);
             if self.zoomed_pane == Some(pane_id) {
@@ -93,6 +96,47 @@ impl Workspace {
                 self.focused_pane = self.all_panes().first().copied();
             }
         }
+    }
+
+    pub fn minimize_pane(&mut self, pane_id: PaneId) -> bool {
+        if !self.all_panes().contains(&pane_id) {
+            return false;
+        }
+        self.save_undo_state();
+        if self.zoomed_pane == Some(pane_id) {
+            self.zoomed_pane = None;
+        }
+        if let Some(root) = self.root.take() {
+            self.root = root.remove_pane(pane_id);
+            if self.focused_pane == Some(pane_id) {
+                self.focused_pane = self.all_panes().first().copied();
+            }
+        }
+        if !self.minimized_panes.contains(&pane_id) {
+            self.minimized_panes.push(pane_id);
+        }
+        true
+    }
+
+    pub fn restore_pane(&mut self, pane_id: PaneId, direction: Option<SplitDirection>) -> bool {
+        if let Some(pos) = self.minimized_panes.iter().position(|&p| p == pane_id) {
+            self.minimized_panes.remove(pos);
+            self.save_undo_state();
+            if self.root.is_none() || self.focused_pane.is_none() {
+                self.add_initial_pane(pane_id);
+            } else {
+                let dir = direction.unwrap_or(SplitDirection::Vertical);
+                let _ = self.split_current(pane_id, dir);
+            }
+            self.focused_pane = Some(pane_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_minimized(&self, pane_id: PaneId) -> bool {
+        self.minimized_panes.contains(&pane_id)
     }
 
     pub fn toggle_zoom(&mut self) {
@@ -151,5 +195,50 @@ impl Workspace {
                 root.adjust_ratio(focused, dir, delta);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_minimize_and_restore() {
+        let mut ws = Workspace::new(WorkspaceId(1), "Test");
+        ws.add_initial_pane(PaneId(1));
+        assert!(ws
+            .split_current(PaneId(2), SplitDirection::Vertical)
+            .is_ok());
+
+        assert_eq!(ws.all_panes(), vec![PaneId(1), PaneId(2)]);
+        assert!(ws.minimized_panes.is_empty());
+
+        // Minimize Pane 2
+        assert!(ws.minimize_pane(PaneId(2)));
+        assert_eq!(ws.all_panes(), vec![PaneId(1)]);
+        assert_eq!(ws.minimized_panes, vec![PaneId(2)]);
+        assert!(ws.is_minimized(PaneId(2)));
+        assert!(!ws.is_minimized(PaneId(1)));
+
+        // Restore Pane 2
+        assert!(ws.restore_pane(PaneId(2), Some(SplitDirection::Horizontal)));
+        assert_eq!(ws.minimized_panes.len(), 0);
+        assert!(ws.all_panes().contains(&PaneId(2)));
+        assert_eq!(ws.focused_pane, Some(PaneId(2)));
+    }
+
+    #[test]
+    fn test_remove_minimized_pane() {
+        let mut ws = Workspace::new(WorkspaceId(1), "Test");
+        ws.add_initial_pane(PaneId(1));
+        assert!(ws
+            .split_current(PaneId(2), SplitDirection::Vertical)
+            .is_ok());
+
+        assert!(ws.minimize_pane(PaneId(2)));
+        assert_eq!(ws.minimized_panes, vec![PaneId(2)]);
+
+        ws.remove_pane(PaneId(2));
+        assert_eq!(ws.minimized_panes.len(), 0);
     }
 }

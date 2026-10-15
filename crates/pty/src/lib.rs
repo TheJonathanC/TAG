@@ -3,7 +3,7 @@ pub mod ring_buffer;
 pub mod selection;
 pub mod vt_grid;
 
-pub use pty_pane::PtyPane;
+pub use pty_pane::{detect_agent_in_tmux, is_known_agent, PtyPane};
 pub use ring_buffer::{Line, ScrollbackRing};
 pub use selection::{Coord, Selection, SelectionMode};
 pub use vt_grid::VtGrid;

@@ -28,6 +28,8 @@ pub struct SavedWorkspace {
     pub focused_pane: Option<PaneId>,
     pub zoomed_pane: Option<PaneId>,
     pub worktree_binding: Option<PathBuf>,
+    #[serde(default)]
+    pub minimized_panes: Vec<PaneId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +73,7 @@ impl From<&Workspace> for SavedWorkspace {
             focused_pane: ws.focused_pane,
             zoomed_pane: ws.zoomed_pane,
             worktree_binding: ws.worktree_binding.clone(),
+            minimized_panes: ws.minimized_panes.clone(),
         }
     }
 }
@@ -85,6 +88,7 @@ impl From<SavedWorkspace> for Workspace {
             zoomed_pane: saved.zoomed_pane,
             worktree_binding: saved.worktree_binding,
             undo_stack: Vec::new(),
+            minimized_panes: saved.minimized_panes,
         }
     }
 }

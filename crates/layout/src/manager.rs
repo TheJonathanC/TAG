@@ -57,6 +57,19 @@ impl LayoutManager {
         &mut self.workspaces
     }
 
+    pub fn find_workspace_mut(&mut self, id: WorkspaceId) -> Option<&mut Workspace> {
+        self.workspaces.iter_mut().find(|w| w.id == id)
+    }
+
+    pub fn find_pane_workspace(&self, pid: PaneId) -> Option<WorkspaceId> {
+        for ws in &self.workspaces {
+            if ws.all_panes().contains(&pid) || ws.minimized_panes.contains(&pid) {
+                return Some(ws.id);
+            }
+        }
+        None
+    }
+
     pub fn switch_workspace(&mut self, id: WorkspaceId) -> bool {
         if let Some(idx) = self.workspaces.iter().position(|w| w.id == id) {
             self.active_idx = idx;
@@ -117,15 +130,6 @@ impl LayoutManager {
         } else {
             (false, Vec::new())
         }
-    }
-
-    pub fn find_pane_workspace(&self, pane_id: PaneId) -> Option<WorkspaceId> {
-        for ws in &self.workspaces {
-            if ws.all_panes().contains(&pane_id) {
-                return Some(ws.id);
-            }
-        }
-        None
     }
 
     pub fn compute_rects(&self, area: Rect) -> HashMap<PaneId, Rect> {

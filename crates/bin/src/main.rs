@@ -42,6 +42,142 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+const TAG_SESSION_NAME: &str = "tag-session";
+
+fn is_session_running(name: &str) -> bool {
+    let status = std::process::Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .output();
+    match status {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
+}
+
+fn attach_to_session(name: &str) -> Result<(), anyhow::Error> {
+    let status = std::process::Command::new("tmux")
+        .args(["attach-session", "-t", name])
+        .status()?;
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to attach to tmux session '{}'",
+            name
+        ));
+    }
+    Ok(())
+}
+
+fn start_and_attach_background_session() -> Result<(), anyhow::Error> {
+    let current_exe = std::env::current_exe()?;
+    let status = std::process::Command::new("tmux")
+        .args([
+            "new-session",
+            "-d",
+            "-s",
+            TAG_SESSION_NAME,
+            &current_exe.to_string_lossy(),
+            "--foreground",
+        ])
+        .status()?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("Failed to start background TAG session."));
+    }
+    let res = attach_to_session(TAG_SESSION_NAME);
+    println!(
+        "\n[TAG detached. Run 'tag' or 'tag attach' to re-attach. Run 'tag kill' to terminate.]"
+    );
+    res
+}
+
+fn load_app_config() -> Config {
+    let config_path = dirs_or_home()
+        .join(".config")
+        .join("tag")
+        .join("config.toml");
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        if let Ok(cfg) = Config::load_from_str(&content) {
+            return cfg;
+        }
+    }
+    Config::default()
+}
+
+fn save_app_config(config: &Config) {
+    let config_path = dirs_or_home()
+        .join(".config")
+        .join("tag")
+        .join("config.toml");
+    if let Some(parent) = config_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(toml_str) = config.to_toml_string() {
+        let _ = std::fs::write(&config_path, toml_str);
+    }
+}
+
+fn refresh_tmux_commands(registry: &mut CommandRegistry) {
+    if let Ok(output) = std::process::Command::new("tmux")
+        .args([
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}\t#{pane_current_command}",
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut seen_sessions = std::collections::HashSet::new();
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                let session = parts[0].trim();
+                if session.is_empty()
+                    || session == TAG_SESSION_NAME
+                    || !seen_sessions.insert(session.to_string())
+                {
+                    continue;
+                }
+                let cmd = parts.get(1).map(|c| c.trim()).unwrap_or("");
+                let is_agent = tag_pty::is_known_agent(cmd);
+                let (name, desc) = if is_agent {
+                    (
+                        format!("Attach Tmux: {} ({})", session, cmd),
+                        format!(
+                            "Attach to tmux session '{}' running agent '{}'",
+                            session, cmd
+                        ),
+                    )
+                } else if !cmd.is_empty() && cmd != "bash" && cmd != "sh" && cmd != "zsh" {
+                    (
+                        format!("Attach Tmux: {} ({})", session, cmd),
+                        format!("Attach to tmux session '{}' ({})", session, cmd),
+                    )
+                } else {
+                    (
+                        format!("Attach Tmux: {}", session),
+                        format!("Attach to tmux session '{}'", session),
+                    )
+                };
+                let cmd_id = format!("agents.attach_tmux_{}", session);
+                let cmd_obj = tag_core::command::Command {
+                    id: cmd_id,
+                    name,
+                    category: tag_core::command::CommandCategory::Agents,
+                    description: desc,
+                    default_shortcut: None,
+                    action: Action::AttachTmux {
+                        session: session.to_string(),
+                    },
+                };
+                registry.register(cmd_obj);
+            }
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "tag")]
 #[command(author = "TAG Team")]
@@ -50,6 +186,14 @@ use tracing_subscriber::FmtSubscriber;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Run directly in foreground (bypass background daemon)
+    #[arg(short, long)]
+    foreground: bool,
+
+    /// Force running in background daemon
+    #[arg(short = 'b', long = "bg")]
+    background: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -59,6 +203,14 @@ enum Commands {
         /// Target agent (claude, codex, agy)
         agent: String,
     },
+    /// Attach to running TAG background session
+    Attach,
+    /// Detach running TAG session
+    Detach,
+    /// Kill running TAG background session
+    Kill,
+    /// Show status of TAG background session
+    Status,
 }
 
 struct AppState {
@@ -109,12 +261,68 @@ async fn main() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
+    if let Some(Commands::Kill) = cli.command {
+        if is_session_running(TAG_SESSION_NAME) {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-session", "-t", TAG_SESSION_NAME])
+                .status();
+            println!("TAG background session terminated.");
+        } else {
+            println!("No TAG background session is currently running.");
+        }
+        return Ok(());
+    }
+
+    if let Some(Commands::Status) = cli.command {
+        if is_session_running(TAG_SESSION_NAME) {
+            println!("TAG background session is active. Run 'tag' or 'tag attach' to connect.");
+        } else {
+            println!("No TAG background session is currently running.");
+        }
+        return Ok(());
+    }
+
+    if let Some(Commands::Detach) = cli.command {
+        if is_session_running(TAG_SESSION_NAME) {
+            let _ = std::process::Command::new("tmux")
+                .args(["detach-client", "-s", TAG_SESSION_NAME])
+                .status();
+            println!("TAG background session detached.");
+        } else {
+            println!("No TAG background session is currently running.");
+        }
+        return Ok(());
+    }
+
     // Guard against running TAG inside an existing TAG session
     if is_inside_tag() {
         eprintln!("Error: Cannot launch TAG from within an active TAG session.");
         eprintln!("Nested TAG instances are disabled to prevent terminal state conflicts.");
         std::process::exit(1);
     }
+
+    let config = load_app_config();
+
+    if let Some(Commands::Attach) = cli.command {
+        if is_session_running(TAG_SESSION_NAME) {
+            return attach_to_session(TAG_SESSION_NAME);
+        } else {
+            println!("No TAG background session found. Starting a new session...");
+            return start_and_attach_background_session();
+        }
+    }
+
+    // Default tag launch: check background mode
+    if !cli.foreground && (cli.background || config.run_in_background) {
+        if is_session_running(TAG_SESSION_NAME) {
+            return attach_to_session(TAG_SESSION_NAME);
+        } else {
+            return start_and_attach_background_session();
+        }
+    }
+
+    // Running in foreground: mark TAG_ACTIVE so child shells detect they are inside TAG
+    std::env::set_var("TAG_ACTIVE", "1");
 
     // Set up file logger (tracing to file, NEVER stdout/stderr)
     let log_dir = std::env::temp_dir();
@@ -276,7 +484,7 @@ async fn run_app(
         .status();
 
     // Initialize state
-    let config = Config::default();
+    let config = load_app_config();
     let theme = Theme::from_config(config.theme.clone());
     let command_registry = CommandRegistry::new();
     let key_state_machine = KeyStateMachine::default();
@@ -459,7 +667,8 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     // 1. Render active workspace panes or empty state
     let active_panes = state.layout_mgr.active_workspace().all_panes();
     if active_panes.is_empty() {
-        render_empty_state(frame, content_area, &state.theme);
+        let min_count = state.layout_mgr.active_workspace().minimized_panes.len();
+        render_empty_state(frame, content_area, &state.theme, min_count);
     } else {
         let rects = state.layout_mgr.compute_rects(content_area);
         let focused_id = state.layout_mgr.active_workspace().focused_pane;
@@ -952,8 +1161,14 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let target_ws = item.workspace_id;
                             let target_pid = item.pane_id;
+                            let is_min = item.is_minimized;
                             state.tab_tray.is_open = false;
                             state.layout_mgr.switch_workspace(target_ws);
+                            if is_min {
+                                if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws) {
+                                    ws.restore_pane(target_pid, None);
+                                }
+                            }
                             state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
                         }
                     }
@@ -961,35 +1176,53 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let target_ws = item.workspace_id;
                             let target_pid = item.pane_id;
+                            let is_min = item.is_minimized;
                             state.tab_tray.is_open = false;
                             state.layout_mgr.switch_workspace(target_ws);
-                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
-                            return execute_action(
-                                state,
-                                Action::Split(SplitDirection::Horizontal),
-                            );
+                            if is_min {
+                                if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws) {
+                                    ws.restore_pane(target_pid, Some(SplitDirection::Horizontal));
+                                }
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(target_pid);
+                            } else {
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(target_pid);
+                                return execute_action(
+                                    state,
+                                    Action::Split(SplitDirection::Horizontal),
+                                );
+                            }
                         }
                     }
                     KeyCode::Char('v') => {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let target_ws = item.workspace_id;
                             let target_pid = item.pane_id;
+                            let is_min = item.is_minimized;
                             state.tab_tray.is_open = false;
                             state.layout_mgr.switch_workspace(target_ws);
-                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
-                            return execute_action(state, Action::Split(SplitDirection::Vertical));
+                            if is_min {
+                                if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws) {
+                                    ws.restore_pane(target_pid, Some(SplitDirection::Vertical));
+                                }
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(target_pid);
+                            } else {
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(target_pid);
+                                return execute_action(
+                                    state,
+                                    Action::Split(SplitDirection::Vertical),
+                                );
+                            }
                         }
                     }
                     KeyCode::Char('x') => {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let pid = item.pane_id;
                             let ws_id = item.workspace_id;
-                            if let Some(ws) = state
-                                .layout_mgr
-                                .workspaces_mut()
-                                .iter_mut()
-                                .find(|w| w.id == ws_id)
-                            {
+                            if let Some(ws) = state.layout_mgr.find_workspace_mut(ws_id) {
                                 ws.remove_pane(pid);
                             }
                             state.panes.remove(&pid);
@@ -1008,7 +1241,21 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                             return execute_action(state, Action::RenamePane(Some(pid)));
                         }
                     }
-                    KeyCode::Char('z') | KeyCode::Char('m') => {
+                    KeyCode::Char('m') => {
+                        if let Some(item) = filtered.get(state.tab_tray.selected_index) {
+                            let target_ws = item.workspace_id;
+                            let target_pid = item.pane_id;
+                            let is_min = item.is_minimized;
+                            if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws) {
+                                if is_min {
+                                    ws.restore_pane(target_pid, None);
+                                } else {
+                                    ws.minimize_pane(target_pid);
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('z') => {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let target_ws = item.workspace_id;
                             let target_pid = item.pane_id;
@@ -1030,6 +1277,24 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
 
                 match key.code {
                     KeyCode::Char('c') | KeyCode::Enter => {
+                        let min_count = state.layout_mgr.active_workspace().minimized_panes.len();
+                        if min_count > 0 && key.code == KeyCode::Enter {
+                            if let Some(first_min) = state
+                                .layout_mgr
+                                .active_workspace()
+                                .minimized_panes
+                                .first()
+                                .copied()
+                            {
+                                state
+                                    .layout_mgr
+                                    .active_workspace_mut()
+                                    .restore_pane(first_min, None);
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(first_min);
+                                return false;
+                            }
+                        }
                         return execute_action(state, Action::SpawnShell);
                     }
                     KeyCode::Char('w') => {
@@ -1282,8 +1547,15 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                             if let Some(item) = filtered.get(clicked_idx) {
                                 let target_ws = item.workspace_id;
                                 let target_pid = item.pane_id;
+                                let is_min = item.is_minimized;
                                 state.tab_tray.is_open = false;
                                 state.layout_mgr.switch_workspace(target_ws);
+                                if is_min {
+                                    if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws)
+                                    {
+                                        ws.restore_pane(target_pid, None);
+                                    }
+                                }
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(target_pid);
                             }
@@ -1293,6 +1565,24 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
 
                     // 3. Content area
                     if state.layout_mgr.active_workspace().all_panes().is_empty() {
+                        let min_count = state.layout_mgr.active_workspace().minimized_panes.len();
+                        if min_count > 0 {
+                            if let Some(first_min) = state
+                                .layout_mgr
+                                .active_workspace()
+                                .minimized_panes
+                                .first()
+                                .copied()
+                            {
+                                state
+                                    .layout_mgr
+                                    .active_workspace_mut()
+                                    .restore_pane(first_min, None);
+                                state.layout_mgr.active_workspace_mut().focused_pane =
+                                    Some(first_min);
+                                return false;
+                            }
+                        }
                         return execute_action(state, Action::SpawnShell);
                     } else {
                         let pane_rects = state
@@ -1318,6 +1608,11 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                                         state.layout_mgr.active_workspace_mut().focused_pane =
                                             Some(pid);
                                         state.layout_mgr.active_workspace_mut().toggle_zoom();
+                                        return false;
+                                    }
+                                    // 3. Clicked on minimize button [_]
+                                    if col >= rect.x + rect.width.saturating_sub(12) {
+                                        state.layout_mgr.active_workspace_mut().minimize_pane(pid);
                                         return false;
                                     }
                                 }
@@ -1362,6 +1657,9 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleCommandPalette => {
             state.palette.is_open = !state.palette.is_open;
+            if state.palette.is_open {
+                refresh_tmux_commands(&mut state.command_registry);
+            }
             state.palette.query.clear();
             state.palette.selected_index = 0;
             state.palette.scroll_offset = 0;
@@ -1388,6 +1686,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleQuickSwitcher => {
             state.palette.is_open = true;
+            refresh_tmux_commands(&mut state.command_registry);
             state.palette.query.clear();
             state.palette.selected_index = 0;
             state.palette.scroll_offset = 0;
@@ -1700,6 +1999,50 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 duration_secs: 3,
             });
         }
+        Action::MinimizePane(target_pid) => {
+            let pid = target_pid.or(state.layout_mgr.active_workspace().focused_pane);
+            if let Some(pid) = pid {
+                state.layout_mgr.active_workspace_mut().minimize_pane(pid);
+                state.toasts.push(Toast {
+                    title: "Pane Minimized".into(),
+                    message: "Pane minimized. Press Ctrl+Space b or open Tab Tray to restore."
+                        .into(),
+                    level: ToastLevel::Info,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 2,
+                });
+            }
+        }
+        Action::RestorePane(target_pid) => {
+            state
+                .layout_mgr
+                .active_workspace_mut()
+                .restore_pane(target_pid, None);
+            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+        }
+        Action::Detach => {
+            save_session_to_disk(state);
+            let _ = std::process::Command::new("tmux")
+                .args(["detach-client"])
+                .status();
+            return true;
+        }
+        Action::ToggleBackgroundMode => {
+            state.config.run_in_background = !state.config.run_in_background;
+            save_app_config(&state.config);
+            let status = if state.config.run_in_background {
+                "enabled (TAG will persist in background)"
+            } else {
+                "disabled (TAG will run in foreground)"
+            };
+            state.toasts.push(Toast {
+                title: "Background Mode".into(),
+                message: format!("Background mode is now {}", status),
+                level: ToastLevel::Success,
+                created_at: chrono::Utc::now(),
+                duration_secs: 3,
+            });
+        }
         _ => {}
     }
     false
@@ -1782,6 +2125,23 @@ fn build_tray_items(state: &AppState) -> Vec<TrayItem> {
                     status: p.agent_status().unwrap_or("running"),
                     is_visible: ws.id == state.layout_mgr.active_workspace_id(),
                     needs_attention: false,
+                    is_minimized: false,
+                });
+            }
+        }
+        for &pid in &ws.minimized_panes {
+            if let Some(p) = state.panes.get(&pid) {
+                tray_items.push(TrayItem {
+                    pane_id: pid,
+                    workspace_id: ws.id,
+                    workspace_name: ws.name.clone(),
+                    title: p.title(),
+                    icon: p.kind().icon(),
+                    branch: p.branch(),
+                    status: p.agent_status().unwrap_or("running"),
+                    is_visible: false,
+                    needs_attention: false,
+                    is_minimized: true,
                 });
             }
         }

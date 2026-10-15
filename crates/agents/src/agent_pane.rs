@@ -182,6 +182,11 @@ impl Pane for AgentPane {
     }
 
     fn agent_status(&self) -> Option<&'static str> {
+        if self.profile_name == "tmux" {
+            if let Some(st) = self.pty.agent_status() {
+                return Some(st);
+            }
+        }
         Some(self.status.as_str())
     }
 

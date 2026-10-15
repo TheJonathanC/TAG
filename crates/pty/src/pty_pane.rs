@@ -201,6 +201,22 @@ impl PtyPane {
     pub fn clear_selection(&mut self) {
         self.selection = None;
     }
+
+    pub fn tmux_session_name(&self) -> Option<String> {
+        if let Some(idx) = self.args.iter().position(|a| a == "-s" || a == "-t") {
+            if let Some(sess) = self.args.get(idx + 1) {
+                return Some(sess.clone());
+            }
+        }
+        if self.title.starts_with("tmux: ") {
+            let rest = &self.title["tmux: ".len()..];
+            let name = rest.split([' ', '(']).next()?.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+        None
+    }
 }
 
 impl Pane for PtyPane {
@@ -209,6 +225,13 @@ impl Pane for PtyPane {
     }
 
     fn title(&self) -> String {
+        if self.kind == PaneKind::Tmux || self.title.starts_with("tmux:") {
+            if let Some(session) = self.tmux_session_name() {
+                if let Some(agent) = detect_agent_in_tmux(&session) {
+                    return format!("tmux: {} ({})", session, agent);
+                }
+            }
+        }
         self.title.clone()
     }
 
@@ -222,18 +245,28 @@ impl Pane for PtyPane {
 
     fn kind(&self) -> PaneKind {
         #[cfg(target_os = "linux")]
-        if self.kind != PaneKind::Tmux {
-            if let Some(pid) = self.child_pid {
-                if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
-                    let cmd_name = std::path::Path::new(&cmd)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(&cmd);
-                    if cmd_name == "tmux" {
-                        return PaneKind::Tmux;
-                    } else if matches!(cmd_name, "agy" | "claude" | "codex") {
-                        return PaneKind::Agent;
+        if let Some(pid) = self.child_pid {
+            if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
+                let cmd_name = std::path::Path::new(&cmd)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&cmd);
+                if cmd_name == "tmux" {
+                    if let Some(session) = self.tmux_session_name() {
+                        if detect_agent_in_tmux(&session).is_some() {
+                            return PaneKind::Agent;
+                        }
                     }
+                    return PaneKind::Tmux;
+                } else if is_known_agent(cmd_name) {
+                    return PaneKind::Agent;
+                }
+            }
+        }
+        if self.kind == PaneKind::Tmux {
+            if let Some(session) = self.tmux_session_name() {
+                if detect_agent_in_tmux(&session).is_some() {
+                    return PaneKind::Agent;
                 }
             }
         }
@@ -449,6 +482,15 @@ impl Pane for PtyPane {
             ));
         }
 
+        let min_btn = Span::styled(
+            "[_] ",
+            if is_focused {
+                theme.warning
+            } else {
+                theme.text.add_modifier(Modifier::DIM)
+            },
+        );
+
         let zoom_btn = if self.is_zoomed {
             Span::styled("[-] ", theme.warning.add_modifier(Modifier::BOLD))
         } else {
@@ -468,7 +510,7 @@ impl Pane for PtyPane {
             .borders(Borders::ALL)
             .border_style(border_style)
             .title(RatLine::from(title_spans))
-            .title(RatLine::from(vec![zoom_btn, close_btn]).alignment(Alignment::Right));
+            .title(RatLine::from(vec![min_btn, zoom_btn, close_btn]).alignment(Alignment::Right));
 
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
@@ -496,7 +538,15 @@ impl Pane for PtyPane {
     }
 
     fn agent_status(&self) -> Option<&'static str> {
-        self.agent_status_text
+        if let Some(status) = self.agent_status_text {
+            return Some(status);
+        }
+        if let Some(session) = self.tmux_session_name() {
+            if detect_agent_in_tmux(&session).is_some() {
+                return Some("running");
+            }
+        }
+        None
     }
 
     fn running_process(&self) -> (Option<String>, Vec<String>, Option<PathBuf>) {
@@ -563,4 +613,40 @@ fn get_foreground_process(shell_pid: u32) -> Option<(String, Vec<String>, PathBu
     }
 
     Some((cmd, args, cwd))
+}
+
+pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
+    let output = std::process::Command::new("tmux")
+        .args([
+            "list-panes",
+            "-s",
+            "-t",
+            session_name,
+            "-F",
+            "#{pane_current_command}",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let cmd = line.trim();
+        if is_known_agent(cmd) {
+            return Some(cmd.to_string());
+        }
+    }
+    None
+}
+
+pub fn is_known_agent(cmd: &str) -> bool {
+    let base = std::path::Path::new(cmd)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(cmd);
+    matches!(
+        base,
+        "agy" | "claude" | "codex" | "aider" | "goose" | "cursor" | "gemini" | "copilot"
+    )
 }
