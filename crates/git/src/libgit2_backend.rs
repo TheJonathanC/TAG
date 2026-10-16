@@ -196,13 +196,20 @@ impl GitBackend for StandardGitBackend {
             return Err(anyhow::anyhow!("Invalid branch name: {}", branch));
         }
 
-        let parent = repo_path.parent().unwrap_or(repo_path);
-        let wt_path = parent.join(name);
+        let main_repo = get_main_repo_path(repo_path);
+        let worktrees_dir = main_repo.join(".worktrees");
+        if !worktrees_dir.exists() {
+            std::fs::create_dir_all(&worktrees_dir)?;
+        }
+
+        ensure_worktree_exclude(&main_repo);
+
+        let wt_path = worktrees_dir.join(name);
         let wt_str = wt_path.to_string_lossy();
 
         let output = Command::new("git")
             .args(["worktree", "add", "-b", branch, "--", &wt_str])
-            .current_dir(repo_path)
+            .current_dir(&main_repo)
             .output()?;
 
         if !output.status.success() {
@@ -210,7 +217,7 @@ impl GitBackend for StandardGitBackend {
             if stderr.contains("already exists") {
                 let fallback = Command::new("git")
                     .args(["worktree", "add", "--", &wt_str, branch])
-                    .current_dir(repo_path)
+                    .current_dir(&main_repo)
                     .output()?;
                 if !fallback.status.success() {
                     let err = String::from_utf8_lossy(&fallback.stderr);
@@ -236,21 +243,52 @@ impl GitBackend for StandardGitBackend {
         if name.is_empty() || name.starts_with('-') {
             return Err(anyhow::anyhow!("Invalid worktree name: {}", name));
         }
+        let main_repo = get_main_repo_path(repo_path);
         let mut cmd = Command::new("git");
         cmd.args(["worktree", "remove"]);
         if force {
             cmd.arg("--force");
         }
         cmd.args(["--", name]);
-        cmd.current_dir(repo_path);
+        cmd.current_dir(&main_repo);
 
         let output = cmd.output()?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "git worktree remove failed: {}",
-                stderr.trim()
-            ));
+            let wt_rel = format!(".worktrees/{}", name);
+            let mut cmd2 = Command::new("git");
+            cmd2.args(["worktree", "remove"]);
+            if force {
+                cmd2.arg("--force");
+            }
+            cmd2.args(["--", &wt_rel]);
+            cmd2.current_dir(&main_repo);
+            let out2 = cmd2.output()?;
+
+            if !out2.status.success() {
+                let wt_abs = main_repo.join(".worktrees").join(name);
+                let wt_abs_str = wt_abs.to_string_lossy();
+                let mut cmd3 = Command::new("git");
+                cmd3.args(["worktree", "remove"]);
+                if force {
+                    cmd3.arg("--force");
+                }
+                cmd3.args(["--", &wt_abs_str]);
+                cmd3.current_dir(&main_repo);
+                let out3 = cmd3.output()?;
+
+                if !out3.status.success() {
+                    let _ = Command::new("git")
+                        .args(["worktree", "prune"])
+                        .current_dir(&main_repo)
+                        .output();
+
+                    let stderr = String::from_utf8_lossy(&out3.stderr);
+                    return Err(anyhow::anyhow!(
+                        "git worktree remove failed: {}",
+                        stderr.trim()
+                    ));
+                }
+            }
         }
 
         Ok(())
@@ -388,5 +426,131 @@ impl GitBackend for StandardGitBackend {
         }
 
         Ok(())
+    }
+}
+
+fn get_main_repo_path(repo_path: &Path) -> PathBuf {
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(repo_path)
+        .output()
+    {
+        if output.status.success() {
+            let common_git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let p = PathBuf::from(common_git_dir);
+            if let Some(parent) = p.parent() {
+                if parent.exists() {
+                    return parent.to_path_buf();
+                }
+            }
+        }
+    }
+
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(repo_path)
+        .output()
+    {
+        if output.status.success() {
+            let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !toplevel.is_empty() {
+                return PathBuf::from(toplevel);
+            }
+        }
+    }
+
+    repo_path.to_path_buf()
+}
+
+fn ensure_worktree_exclude(main_repo: &Path) {
+    let exclude_file = main_repo.join(".git").join("info").join("exclude");
+    if let Some(parent) = exclude_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    if let Ok(content) = std::fs::read_to_string(&exclude_file) {
+        if content
+            .lines()
+            .any(|l| l.trim() == ".worktrees" || l.trim() == ".worktrees/")
+        {
+            return;
+        }
+    }
+
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude_file)
+    {
+        use std::io::Write;
+        let _ = writeln!(f, ".worktrees/");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_worktree_in_project_worktrees_folder() {
+        let temp_dir = std::env::temp_dir().join(format!("tag_test_repo_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let init_out = Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&temp_dir)
+            .output()
+            .unwrap();
+        assert!(init_out.status.success());
+
+        let _ = Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .output();
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .output();
+
+        std::fs::write(temp_dir.join("README.md"), "hello").unwrap();
+        let _ = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&temp_dir)
+            .output();
+        let _ = Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&temp_dir)
+            .output();
+
+        let backend = StandardGitBackend;
+        let wt_path = backend
+            .create_worktree(&temp_dir, "feature-x", "feature-x")
+            .unwrap();
+
+        // Must be inside the project folder under .worktrees, NOT in temp_dir.parent()!
+        assert_eq!(wt_path, temp_dir.join(".worktrees").join("feature-x"));
+        assert!(wt_path.exists());
+
+        // Verify .worktrees/ is excluded so it doesn't show in git status
+        let exclude_content = std::fs::read_to_string(temp_dir.join(".git/info/exclude")).unwrap();
+        assert!(exclude_content.contains(".worktrees/"));
+
+        // Verify git status is clean
+        let status = backend.repo_status(&temp_dir).unwrap();
+        assert!(status.changed_files.is_empty());
+
+        // Verify list_worktrees sees both
+        let worktrees = backend.list_worktrees(&temp_dir).unwrap();
+        assert_eq!(worktrees.len(), 2);
+        assert!(worktrees.iter().any(|w| w.name == "feature-x"));
+
+        // Verify delete_worktree removes it cleanly
+        backend
+            .delete_worktree(&temp_dir, "feature-x", true)
+            .unwrap();
+        assert!(!wt_path.exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

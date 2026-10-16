@@ -713,6 +713,27 @@ fn get_foreground_process(shell_pid: u32) -> Option<(String, Vec<String>, PathBu
         .and_then(|n| n.to_str())
         .unwrap_or(&cmd);
 
+    if cmd_name == "tmux" {
+        let session = args.windows(2).find(|w| w[0] == "-t").map(|w| &w[1]);
+        let mut tmux_cmd = std::process::Command::new("tmux");
+        tmux_cmd.arg("display-message");
+        if let Some(s) = session {
+            tmux_cmd.args(["-t", s]);
+        }
+        tmux_cmd.args(["-p", "#{pane_current_path}"]);
+        if let Ok(output) = tmux_cmd.output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    let p = PathBuf::from(path_str);
+                    if p.exists() {
+                        return Some((cmd, args, p));
+                    }
+                }
+            }
+        }
+    }
+
     let is_shell = matches!(cmd_name, "bash" | "zsh" | "fish" | "sh" | "dash");
     if current_pid == shell_pid && is_shell {
         return Some((String::new(), Vec::new(), cwd));

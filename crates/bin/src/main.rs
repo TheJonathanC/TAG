@@ -2541,6 +2541,18 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 (80, 24)
             };
 
+            let split_cwd = state
+                .layout_mgr
+                .active_workspace()
+                .focused_pane
+                .and_then(|pid| state.panes.get(&pid))
+                .and_then(|p| {
+                    let (_, _, proc_cwd) = p.running_process();
+                    proc_cwd.or_else(|| p.cwd())
+                })
+                .or_else(|| state.layout_mgr.active_workspace().worktree_binding.clone())
+                .or_else(|| std::env::current_dir().ok());
+
             if let Ok(new_pane) = PtyPane::spawn(
                 new_id,
                 format!("Shell-{}", new_id.0),
@@ -2548,7 +2560,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 None,
                 &[],
                 &env,
-                std::env::current_dir().ok(),
+                split_cwd,
                 w,
                 h,
                 state.config.scrollback_lines,
@@ -2589,6 +2601,18 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             } else {
                 (80, 24)
             };
+            let ws_cwd = state
+                .layout_mgr
+                .active_workspace()
+                .focused_pane
+                .and_then(|pid| state.panes.get(&pid))
+                .and_then(|p| {
+                    let (_, _, proc_cwd) = p.running_process();
+                    proc_cwd.or_else(|| p.cwd())
+                })
+                .or_else(|| state.layout_mgr.active_workspace().worktree_binding.clone())
+                .or_else(|| std::env::current_dir().ok());
+
             if let Ok(new_pane) = PtyPane::spawn(
                 new_pid,
                 "Shell".into(),
@@ -2596,7 +2620,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 None,
                 &[],
                 &HashMap::new(),
-                std::env::current_dir().ok(),
+                ws_cwd,
                 w,
                 h,
                 state.config.scrollback_lines,
@@ -3067,6 +3091,14 @@ fn get_active_repo_path(state: &AppState) -> PathBuf {
     }
 
     if candidate_path.is_none() {
+        if let Some(ref binding) = state.layout_mgr.active_workspace().worktree_binding {
+            if binding.exists() {
+                candidate_path = Some(binding.clone());
+            }
+        }
+    }
+
+    if candidate_path.is_none() {
         for pane in state.panes.values() {
             let (_, _, cwd) = pane.running_process();
             if let Some(p) = cwd.or_else(|| pane.cwd()) {
@@ -3080,6 +3112,22 @@ fn get_active_repo_path(state: &AppState) -> PathBuf {
 
     let search_path = candidate_path
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(&search_path)
+        .output()
+    {
+        if output.status.success() {
+            let common_git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let p = PathBuf::from(common_git_dir);
+            if let Some(parent) = p.parent() {
+                if parent.exists() {
+                    return parent.to_path_buf();
+                }
+            }
+        }
+    }
 
     if let Ok(output) = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
