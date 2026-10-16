@@ -91,6 +91,46 @@ impl UsageStore {
         Ok(res > 0)
     }
 
+    pub fn insert_events_batch(&mut self, events: &[UsageEvent]) -> Result<usize, rusqlite::Error> {
+        if events.is_empty() {
+            return Ok(0);
+        }
+        let pricing = self.pricing.clone();
+        let tx = self.conn.transaction()?;
+        let mut inserted_count = 0;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR IGNORE INTO usage_events (
+                    agent, session_id, step_id, project, model,
+                    input_tokens, output_tokens, cache_read, cache_write,
+                    cost_usd, timestamp
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            )?;
+            for event in events {
+                let cost = pricing.estimate_cost(event);
+                let ts_str = event.timestamp.to_rfc3339();
+                let res = stmt.execute(params![
+                    event.agent,
+                    event.session_id,
+                    event.step_id,
+                    event.project,
+                    event.model,
+                    event.input_tokens,
+                    event.output_tokens,
+                    event.cache_read,
+                    event.cache_write,
+                    cost,
+                    ts_str,
+                ])?;
+                if res > 0 {
+                    inserted_count += res;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(inserted_count)
+    }
+
     pub fn query_aggregate_since(
         &self,
         since: DateTime<Utc>,

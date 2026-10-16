@@ -53,7 +53,26 @@ impl SavedSession {
             fs::create_dir_all(parent)?;
         }
         let data = serde_json::to_string_pretty(self)?;
-        fs::write(path, data)?;
+        let tmp_path = path.with_extension("json.tmp");
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            file.write_all(data.as_bytes())?;
+            file.sync_all()?;
+            let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&tmp_path, data)?;
+        }
+        fs::rename(&tmp_path, path)?;
         Ok(())
     }
 

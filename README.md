@@ -218,6 +218,20 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 - **How to use it:**
   - **Insert snippet:** Press `Ctrl+Space s`, choose a template, and press `Enter`.
   - **Paste clipboard image:** Copy an image from your browser or screenshot tool, switch to TAG, and press `Ctrl+Space i`. The local file path is pasted into your prompt.
+  - **Over SSH:**
+    - Option 1 (X11 Forwarding): Connect with `ssh -X` or `ssh -Y` for direct clipboard access from your local machine.
+    - Option 2 (`tag paste-image` CLI): Pipe or pass images directly from your terminal:
+      ```bash
+      # macOS local to remote server
+      pbpaste | ssh myserver 'tag paste-image'
+
+      # Linux Wayland/X11 local to remote server
+      wl-paste | ssh myserver 'tag paste-image'
+
+      # From within any remote shell
+      tag paste-image /path/to/screenshot.png
+      ```
+    - Option 3 (Staged drop): Copy any image file to `.orchestrator/cache/drop.png` or `/tmp/tag-clipboard-drop.png` and press `Ctrl+Space i`. TAG automatically imports it, saves it as PNG, and injects the path.
 
 ### 11. Secrets vault and environment injection
 

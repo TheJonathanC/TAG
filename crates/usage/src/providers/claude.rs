@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -52,9 +52,18 @@ impl ClaudeCodeProvider {
 
                     let session_id = v
                         .get("session_id")
+                        .or_else(|| v.get("sessionId"))
                         .and_then(|s| s.as_str())
                         .unwrap_or("claude-session")
                         .to_string();
+
+                    let ts = v
+                        .get("timestamp")
+                        .or_else(|| v.get("created_at"))
+                        .and_then(|s| s.as_str())
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(Utc::now);
 
                     events.push(UsageEvent {
                         agent: "claude".into(),
@@ -66,7 +75,7 @@ impl ClaudeCodeProvider {
                         output_tokens: out_tok,
                         cache_read,
                         cache_write,
-                        timestamp: Utc::now(),
+                        timestamp: ts,
                     });
                 }
             }

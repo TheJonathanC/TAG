@@ -14,6 +14,8 @@ pub struct ThemeConfig {
     pub success: String,
     pub info: String,
     pub nerd_fonts: bool,
+    #[serde(default)]
+    pub selection: Option<String>,
 }
 
 impl Default for ThemeConfig {
@@ -30,6 +32,7 @@ impl Default for ThemeConfig {
             success: "#98c379".into(),
             info: "#56b6c2".into(),
             nerd_fonts: true,
+            selection: Some("#282c34".into()),
         }
     }
 }
@@ -48,6 +51,7 @@ pub struct Theme {
     pub badge: Style,
     pub title_focused: Style,
     pub title_unfocused: Style,
+    pub selection: Style,
 }
 
 impl Default for Theme {
@@ -70,6 +74,7 @@ impl Theme {
             success: "#00ff00".into(),
             info: "#00ffff".into(),
             nerd_fonts: false,
+            selection: Some("#ffffff".into()),
         };
         Self::from_config(config)
     }
@@ -97,6 +102,20 @@ impl Theme {
         let col_succ = parse_color(&config.success, Color::Green);
         let col_info = parse_color(&config.info, Color::Cyan);
 
+        let selection_style = if config.name == "high-contrast" {
+            Style::default()
+                .bg(Color::White)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            let col_sel = config
+                .selection
+                .as_deref()
+                .map(|s| parse_color(s, Color::Rgb(40, 44, 52)))
+                .unwrap_or(Color::Rgb(40, 44, 52));
+            Style::default().bg(col_sel)
+        };
+
         Self {
             border_focused: Style::default().fg(col_focused),
             border_unfocused: Style::default().fg(col_unfocused),
@@ -111,6 +130,7 @@ impl Theme {
                 .fg(col_focused)
                 .add_modifier(Modifier::BOLD),
             title_unfocused: Style::default().fg(col_unfocused),
+            selection: selection_style,
             config,
         }
     }

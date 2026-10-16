@@ -67,7 +67,9 @@ impl GitBackend for StandardGitBackend {
             .current_dir(path)
             .output()?;
         let branch = if branch_out.status.success() {
-            let b = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+            let b = String::from_utf8_lossy(&branch_out.stdout)
+                .trim()
+                .to_string();
             if b.is_empty() {
                 "HEAD (detached)".to_string()
             } else {
@@ -101,10 +103,7 @@ impl GitBackend for StandardGitBackend {
         {
             if count_out.status.success() {
                 let count_str = String::from_utf8_lossy(&count_out.stdout);
-                let parts: Vec<&str> = count_str
-                    .split_whitespace()
-                    .map(|s| s.trim())
-                    .collect();
+                let parts: Vec<&str> = count_str.split_whitespace().map(|s| s.trim()).collect();
                 if parts.len() == 2 {
                     ahead = parts[0].parse().unwrap_or(0);
                     behind = parts[1].parse().unwrap_or(0);
@@ -185,11 +184,24 @@ impl GitBackend for StandardGitBackend {
         name: &str,
         branch: &str,
     ) -> Result<PathBuf, anyhow::Error> {
+        if name.is_empty()
+            || name.starts_with('-')
+            || name.contains("..")
+            || name.contains('/')
+            || name.contains('\\')
+        {
+            return Err(anyhow::anyhow!("Invalid worktree name: {}", name));
+        }
+        if branch.is_empty() || branch.starts_with('-') || branch.contains("..") {
+            return Err(anyhow::anyhow!("Invalid branch name: {}", branch));
+        }
+
         let parent = repo_path.parent().unwrap_or(repo_path);
         let wt_path = parent.join(name);
+        let wt_str = wt_path.to_string_lossy();
 
         let output = Command::new("git")
-            .args(["worktree", "add", "-b", branch, wt_path.to_str().unwrap()])
+            .args(["worktree", "add", "-b", branch, "--", &wt_str])
             .current_dir(repo_path)
             .output()?;
 
@@ -197,7 +209,7 @@ impl GitBackend for StandardGitBackend {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("already exists") {
                 let fallback = Command::new("git")
-                    .args(["worktree", "add", wt_path.to_str().unwrap(), branch])
+                    .args(["worktree", "add", "--", &wt_str, branch])
                     .current_dir(repo_path)
                     .output()?;
                 if !fallback.status.success() {
@@ -205,7 +217,10 @@ impl GitBackend for StandardGitBackend {
                     return Err(anyhow::anyhow!("git worktree add failed: {}", err.trim()));
                 }
             } else {
-                return Err(anyhow::anyhow!("git worktree add failed: {}", stderr.trim()));
+                return Err(anyhow::anyhow!(
+                    "git worktree add failed: {}",
+                    stderr.trim()
+                ));
             }
         }
 
@@ -218,18 +233,24 @@ impl GitBackend for StandardGitBackend {
         name: &str,
         force: bool,
     ) -> Result<(), anyhow::Error> {
+        if name.is_empty() || name.starts_with('-') {
+            return Err(anyhow::anyhow!("Invalid worktree name: {}", name));
+        }
         let mut cmd = Command::new("git");
         cmd.args(["worktree", "remove"]);
         if force {
             cmd.arg("--force");
         }
-        cmd.arg(name);
+        cmd.args(["--", name]);
         cmd.current_dir(repo_path);
 
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("git worktree remove failed: {}", stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "git worktree remove failed: {}",
+                stderr.trim()
+            ));
         }
 
         Ok(())
@@ -267,8 +288,8 @@ impl GitBackend for StandardGitBackend {
                 let s = String::from_utf8_lossy(&status_out.stdout);
                 let mut untracked_diff = String::new();
                 for line in s.lines() {
-                    if line.starts_with("?? ") {
-                        let fpath = line[3..].trim();
+                    if let Some(fpath_raw) = line.strip_prefix("?? ") {
+                        let fpath = fpath_raw.trim();
                         untracked_diff.push_str(&format!("diff --untracked a/{0} b/{0}\n", fpath));
                         untracked_diff.push_str(&format!("--- /dev/null\n+++ b/{}\n", fpath));
                         let full_p = path.join(fpath);
@@ -290,13 +311,12 @@ impl GitBackend for StandardGitBackend {
         Ok(diff_str)
     }
 
-    fn merge_branch(
-        &self,
-        repo_path: &Path,
-        branch: &str,
-    ) -> Result<String, anyhow::Error> {
+    fn merge_branch(&self, repo_path: &Path, branch: &str) -> Result<String, anyhow::Error> {
+        if branch.is_empty() || branch.starts_with('-') {
+            return Err(anyhow::anyhow!("Invalid branch name: {}", branch));
+        }
         let output = Command::new("git")
-            .args(["merge", "--no-edit", branch])
+            .args(["merge", "--no-edit", "--", branch])
             .current_dir(repo_path)
             .output()?;
 
@@ -317,7 +337,11 @@ impl GitBackend for StandardGitBackend {
             return Err(anyhow::anyhow!("Merge failed: {}", msg));
         }
 
-        let result = if !stdout.is_empty() { stdout } else { "Merge successful".to_string() };
+        let result = if !stdout.is_empty() {
+            stdout
+        } else {
+            "Merge successful".to_string()
+        };
         Ok(result)
     }
 
@@ -329,7 +353,10 @@ impl GitBackend for StandardGitBackend {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("git merge --abort failed: {}", stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "git merge --abort failed: {}",
+                stderr.trim()
+            ));
         }
 
         Ok(())
@@ -337,7 +364,7 @@ impl GitBackend for StandardGitBackend {
 
     fn stage_file(&self, path: &Path, file: &str) -> Result<(), anyhow::Error> {
         let output = Command::new("git")
-            .args(["add", file])
+            .args(["add", "--", file])
             .current_dir(path)
             .output()?;
 

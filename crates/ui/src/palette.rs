@@ -1,7 +1,7 @@
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
@@ -24,22 +24,26 @@ pub fn get_matched_commands<'a>(
     registry: &'a CommandRegistry,
     query: &str,
 ) -> Vec<(&'a Command, i64)> {
-    let matcher = SkimMatcherV2::default();
-    let mut matched_commands: Vec<(&Command, i64)> = registry
-        .commands()
-        .iter()
-        .filter_map(|cmd| {
-            if query.is_empty() {
-                Some((cmd, 0))
-            } else {
-                let score = matcher
-                    .fuzzy_match(&cmd.name, query)
-                    .or_else(|| matcher.fuzzy_match(&cmd.description, query))
-                    .or_else(|| matcher.fuzzy_match(cmd.category.name(), query));
-                score.map(|s| (cmd, s))
-            }
-        })
-        .collect();
+    thread_local! {
+        static MATCHER: SkimMatcherV2 = SkimMatcherV2::default();
+    }
+    let mut matched_commands: Vec<(&Command, i64)> = MATCHER.with(|matcher| {
+        registry
+            .commands()
+            .iter()
+            .filter_map(|cmd| {
+                if query.is_empty() {
+                    Some((cmd, 0))
+                } else {
+                    let score = matcher
+                        .fuzzy_match(&cmd.name, query)
+                        .or_else(|| matcher.fuzzy_match(&cmd.description, query))
+                        .or_else(|| matcher.fuzzy_match(cmd.category.name(), query));
+                    score.map(|s| (cmd, s))
+                }
+            })
+            .collect()
+    });
 
     if !query.is_empty() {
         matched_commands.sort_by_key(|a| std::cmp::Reverse(a.1));
@@ -177,7 +181,7 @@ pub fn render_command_palette(
         ));
 
         let row_style = if is_selected {
-            Style::default().bg(Color::Rgb(40, 44, 52))
+            theme.selection
         } else {
             Style::default()
         };

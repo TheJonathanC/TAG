@@ -13,6 +13,7 @@ pub enum HookEvent {
     Error,
     Exited,
     UsageThreshold,
+    PasteImage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

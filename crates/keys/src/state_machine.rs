@@ -16,7 +16,6 @@ pub struct KeyStateMachine {
     keymap: Keymap,
     state: KeyState,
     leader_press_time: Option<Instant>,
-    #[allow(dead_code)]
     which_key_delay: Duration,
 }
 
@@ -36,6 +35,16 @@ impl KeyStateMachine {
         }
     }
 
+    pub fn from_config(
+        config: &tag_core::config::Config,
+        registry: &tag_core::command::CommandRegistry,
+    ) -> Self {
+        Self::new(
+            Keymap::from_config(config, registry),
+            Duration::from_millis(config.which_key_delay_ms),
+        )
+    }
+
     pub fn state(&self) -> KeyState {
         self.state
     }
@@ -53,7 +62,13 @@ impl KeyStateMachine {
     }
 
     pub fn should_show_which_key(&self) -> bool {
-        self.state == KeyState::LeaderPending
+        if self.state != KeyState::LeaderPending {
+            return false;
+        }
+        match self.leader_press_time {
+            Some(t) => t.elapsed() >= self.which_key_delay,
+            None => true,
+        }
     }
 
     pub fn process_key(&mut self, event: KeyEvent) -> Option<Action> {

@@ -1,4 +1,4 @@
-use argon2::Argon2;
+use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
@@ -8,7 +8,9 @@ pub struct Crypto;
 impl Crypto {
     pub fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32], anyhow::Error> {
         let mut key = [0u8; 32];
-        let argon2 = Argon2::default();
+        let params = Params::new(19456, 3, 1, Some(32))
+            .map_err(|e| anyhow::anyhow!("Argon2 params error: {}", e))?;
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         argon2
             .hash_password_into(passphrase, salt, &mut key)
             .map_err(|e| anyhow::anyhow!("Argon2 derivation error: {}", e))?;

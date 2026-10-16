@@ -113,8 +113,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
         ""
     };
 
-    if !hints.is_empty() && spaces > hints.len() + 1 {
-        let pad = " ".repeat(spaces - hints.len() - 1);
+    let hints_width = Span::raw(hints).width();
+    if !hints.is_empty() && spaces > hints_width + 1 {
+        let pad = " ".repeat(spaces - hints_width - 1);
         spans.push(Span::raw(pad));
         spans.push(Span::styled(
             hints,
@@ -144,10 +145,11 @@ pub fn hit_test_status_bar(
     for (i, ws) in workspaces.iter().enumerate() {
         let is_active = ws.id == active_id;
         let has_close = is_active && total_ws > 1;
+        let name_width = Span::raw(&ws.name).width();
         let badge_len = if has_close {
-            (8 + (i + 1).to_string().len() + ws.name.len()) as u16
+            (8 + (i + 1).to_string().len() + name_width) as u16
         } else {
-            (6 + (i + 1).to_string().len() + ws.name.len()) as u16
+            (6 + (i + 1).to_string().len() + name_width) as u16
         };
 
         if col >= current_x && col < current_x + badge_len {

@@ -72,13 +72,19 @@ impl VaultStore {
         salt.copy_from_slice(salt_slice);
 
         let mut key = Crypto::derive_key(passphrase.as_bytes(), &salt)?;
-        let decrypted_bytes = Crypto::decrypt(&key, ciphertext)?;
+        let decrypt_res = Crypto::decrypt(&key, ciphertext);
         key.zeroize();
+        let mut decrypted_bytes = decrypt_res?;
 
-        let raw_map: HashMap<String, String> = serde_json::from_slice(&decrypted_bytes)?;
+        let parse_res: Result<HashMap<String, String>, _> =
+            serde_json::from_slice(&decrypted_bytes);
+        decrypted_bytes.zeroize();
+        let raw_map = parse_res?;
         self.secrets.clear();
-        for (k, v) in raw_map {
-            self.secrets.insert(k, SecretString::from(v));
+        for (k, mut v) in raw_map {
+            let secret = SecretString::from(v.clone());
+            v.zeroize();
+            self.secrets.insert(k, secret);
         }
 
         self.salt = salt;
@@ -87,9 +93,11 @@ impl VaultStore {
         Ok(())
     }
 
-    pub fn set_secret(&mut self, key: String, val: String) {
+    pub fn set_secret(&mut self, key: String, mut val: String) {
         self.last_accessed = Utc::now();
-        self.secrets.insert(key, SecretString::from(val));
+        let secret = SecretString::from(val.clone());
+        val.zeroize();
+        self.secrets.insert(key, secret);
     }
 
     pub fn get_secret(&mut self, key: &str) -> Option<&SecretString> {
@@ -113,23 +121,56 @@ impl VaultStore {
     pub fn save(&self, passphrase: &str) -> Result<(), anyhow::Error> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            }
         }
 
-        let mut raw_map = HashMap::new();
+        let mut raw_map: HashMap<&str, &str> = HashMap::new();
         for (k, v) in &self.secrets {
-            raw_map.insert(k.clone(), v.expose_secret().to_string());
+            raw_map.insert(k.as_str(), v.expose_secret());
         }
 
-        let json_bytes = serde_json::to_vec(&raw_map)?;
-        let mut key = Crypto::derive_key(passphrase.as_bytes(), &self.salt)?;
-        let ciphertext = Crypto::encrypt(&key, &json_bytes)?;
+        let mut json_bytes = serde_json::to_vec(&raw_map)?;
+        let key_res = Crypto::derive_key(passphrase.as_bytes(), &self.salt);
+        let mut key = match key_res {
+            Ok(k) => k,
+            Err(e) => {
+                json_bytes.zeroize();
+                return Err(e);
+            }
+        };
+        let encrypt_res = Crypto::encrypt(&key, &json_bytes);
         key.zeroize();
+        json_bytes.zeroize();
+        let ciphertext = encrypt_res?;
 
         let mut payload = Vec::with_capacity(16 + ciphertext.len());
         payload.extend_from_slice(&self.salt);
         payload.extend_from_slice(&ciphertext);
 
-        fs::write(&self.path, payload)?;
+        let tmp_path = self.path.with_extension("enc.tmp");
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            file.write_all(&payload)?;
+            file.sync_all()?;
+            let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&tmp_path, &payload)?;
+        }
+        fs::rename(&tmp_path, &self.path)?;
         Ok(())
     }
 }

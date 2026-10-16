@@ -130,6 +130,7 @@ pub fn render_help_overlay(
                 ("Enter on Snippet", "Bracketed Paste", "Injects multi-line text safely using bracketed paste escapes"),
                 ("{{variable}}", "Templating", "Substitutes variables dynamically before injection"),
                 ("Ctrl+Space i", "Image Bridge", "Extracts clipboard image, saves to .orchestrator/cache/, and pastes path"),
+                ("tag paste-image", "CLI Image Bridge", "Injects image from file or stdin into focused pane (SSH friendly)"),
             ],
         ),
         (

@@ -169,8 +169,13 @@ impl LayoutNode {
                 second,
             } => match direction {
                 SplitDirection::Vertical => {
-                    let first_width = ((area.width as f32) * ratio).round() as u16;
-                    let first_width = first_width.clamp(4, area.width.saturating_sub(4));
+                    let max_w = area.width.saturating_sub(4);
+                    let first_width = if max_w >= 4 {
+                        let w = ((area.width as f32) * ratio).round() as u16;
+                        w.clamp(4, max_w)
+                    } else {
+                        area.width / 2
+                    };
                     let second_width = area.width.saturating_sub(first_width);
 
                     let first_rect = Rect {
@@ -190,8 +195,13 @@ impl LayoutNode {
                     second.calculate_rects(second_rect, map);
                 }
                 SplitDirection::Horizontal => {
-                    let first_height = ((area.height as f32) * ratio).round() as u16;
-                    let first_height = first_height.clamp(2, area.height.saturating_sub(2));
+                    let max_h = area.height.saturating_sub(2);
+                    let first_height = if max_h >= 2 {
+                        let h = ((area.height as f32) * ratio).round() as u16;
+                        h.clamp(2, max_h)
+                    } else {
+                        area.height / 2
+                    };
                     let second_height = area.height.saturating_sub(first_height);
 
                     let first_rect = Rect {
@@ -250,5 +260,22 @@ mod tests {
         assert_eq!(rects.get(&PaneId(1)).unwrap().width, 50);
         assert_eq!(rects.get(&PaneId(2)).unwrap().width, 50);
         assert_eq!(rects.get(&PaneId(2)).unwrap().x, 50);
+    }
+
+    #[test]
+    fn test_tree_split_small_area_no_panic() {
+        let root = LayoutNode::leaf(PaneId(1));
+        let root = root.split_pane(PaneId(1), PaneId(2), SplitDirection::Vertical);
+        let root = root.split_pane(PaneId(2), PaneId(3), SplitDirection::Horizontal);
+
+        // Very small area where width < 8 and height < 4 (previously panicked on clamp min > max)
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 5,
+            height: 3,
+        };
+        let rects = root.compute_rects(area);
+        assert_eq!(rects.len(), 3);
     }
 }

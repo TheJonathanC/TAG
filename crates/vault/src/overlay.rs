@@ -7,12 +7,25 @@ use ratatui::Frame;
 use tag_core::theme::Theme;
 
 use crate::store::VaultStore;
+use zeroize::Zeroize;
 
 #[derive(Default)]
 pub struct VaultOverlayState {
     pub is_open: bool,
     pub input_buffer: String,
     pub status_message: Option<String>,
+}
+
+impl VaultOverlayState {
+    pub fn clear_input(&mut self) {
+        self.input_buffer.zeroize();
+    }
+}
+
+impl Drop for VaultOverlayState {
+    fn drop(&mut self) {
+        self.input_buffer.zeroize();
+    }
 }
 
 pub fn render_vault_overlay(

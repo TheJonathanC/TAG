@@ -19,6 +19,7 @@ pub struct AgentPane {
     status: AgentStatus,
     start_time: DateTime<Utc>,
     worktree: Option<PathBuf>,
+    client_session: Option<String>,
 }
 
 impl AgentPane {
@@ -63,6 +64,7 @@ impl AgentPane {
             status: AgentStatus::Running,
             start_time: Utc::now(),
             worktree,
+            client_session: None,
         })
     }
 
@@ -91,22 +93,28 @@ impl AgentPane {
             .map(|s| s.success())
             .unwrap_or(false);
 
-        let args = if has_session {
+        let (args, client_sess) = if has_session {
             let client_session = format!("{}-tag-{}", session_name, id.0);
-            vec![
-                "new-session".to_string(),
-                "-t".to_string(),
-                session_name.to_string(),
-                "-s".to_string(),
-                client_session,
-            ]
+            (
+                vec![
+                    "new-session".to_string(),
+                    "-t".to_string(),
+                    session_name.to_string(),
+                    "-s".to_string(),
+                    client_session.clone(),
+                ],
+                Some(client_session),
+            )
         } else {
-            vec![
-                "new-session".to_string(),
-                "-A".to_string(),
-                "-s".to_string(),
-                session_name.to_string(),
-            ]
+            (
+                vec![
+                    "new-session".to_string(),
+                    "-A".to_string(),
+                    "-s".to_string(),
+                    session_name.to_string(),
+                ],
+                None,
+            )
         };
 
         let mut pty = PtyPane::spawn(
@@ -131,6 +139,7 @@ impl AgentPane {
             status: AgentStatus::Running,
             start_time: Utc::now(),
             worktree: None,
+            client_session: client_sess,
         })
     }
 
@@ -227,7 +236,7 @@ impl Pane for AgentPane {
                     HookEvent::Exited => {
                         self.set_status(AgentStatus::Exited);
                     }
-                    HookEvent::UsageThreshold => {}
+                    HookEvent::UsageThreshold | HookEvent::PasteImage => {}
                 }
             }
         }
@@ -273,5 +282,24 @@ impl Pane for AgentPane {
 
     fn running_process(&self) -> (Option<String>, Vec<String>, Option<PathBuf>) {
         self.pty.running_process()
+    }
+
+    fn kill(&mut self) {
+        self.pty.kill();
+        if let Some(ref sess) = self.client_session.take() {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-session", "-t", sess])
+                .status();
+        }
+    }
+}
+
+impl Drop for AgentPane {
+    fn drop(&mut self) {
+        if let Some(ref sess) = self.client_session {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-session", "-t", sess])
+                .status();
+        }
     }
 }

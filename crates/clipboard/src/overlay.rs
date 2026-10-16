@@ -1,5 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
@@ -77,7 +77,7 @@ pub fn render_snippet_overlay(
         spans.push(Span::styled(&snip.description, theme.text));
 
         let row_style = if is_selected {
-            Style::default().bg(Color::Rgb(40, 44, 52))
+            theme.selection
         } else {
             Style::default()
         };

@@ -339,6 +339,26 @@ impl CommandRegistry {
                 action: Action::ToggleBackgroundMode,
             },
             Command {
+                id: "applets.chat".into(),
+                name: "Applet: Peer Chat".into(),
+                category: CommandCategory::Tools,
+                description: "Spawn native multi-agent / developer peer chat pane".into(),
+                default_shortcut: None,
+                action: Action::SpawnApplet {
+                    name: "chat".into(),
+                },
+            },
+            Command {
+                id: "applets.poker".into(),
+                name: "Applet: Texas Hold'em Poker".into(),
+                category: CommandCategory::Tools,
+                description: "Spawn interactive break-time Texas Hold'em poker table".into(),
+                default_shortcut: None,
+                action: Action::SpawnApplet {
+                    name: "poker".into(),
+                },
+            },
+            Command {
                 id: "system.tour".into(),
                 name: "Start Tour".into(),
                 category: CommandCategory::System,

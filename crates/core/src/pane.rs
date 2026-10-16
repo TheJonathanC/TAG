@@ -54,6 +54,7 @@ pub trait Pane: Send + Sync {
     fn on_resize(&mut self, width: u16, height: u16);
     fn is_active(&self) -> bool;
     fn send_input(&mut self, _data: &[u8]) {}
+    fn kill(&mut self) {}
 
     // Scrolling & selection
     fn scroll(&mut self, _delta: i32) {}

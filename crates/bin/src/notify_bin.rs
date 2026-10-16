@@ -52,6 +52,7 @@ pub fn run_notify() {
         "error" => HookEvent::Error,
         "exited" => HookEvent::Exited,
         "usagethreshold" | "usage" => HookEvent::UsageThreshold,
+        "pasteimage" | "paste-image" | "paste" | "image" => HookEvent::PasteImage,
         _ => HookEvent::NeedsInput,
     };
 

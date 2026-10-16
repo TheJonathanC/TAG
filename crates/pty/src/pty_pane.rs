@@ -1,4 +1,4 @@
-use portable_pty::{CommandBuilder, MasterPty, PtyPair, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, PtySize};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line as RatLine, Span};
@@ -21,12 +21,20 @@ use crate::ring_buffer::ScrollbackRing;
 use crate::selection::{Coord, Selection, SelectionMode};
 use crate::vt_grid::VtGrid;
 
+type ForegroundProcCache = Option<(
+    Option<String>,
+    Vec<String>,
+    Option<PathBuf>,
+    std::time::Instant,
+)>;
+
 pub struct PtyPane {
     id: PaneId,
     title: String,
     kind: PaneKind,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    child: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
     vt: VtGrid,
     ring: ScrollbackRing,
     scroll_offset: usize,
@@ -45,6 +53,7 @@ pub struct PtyPane {
     is_zoomed: bool,
     cached_process_kind: Mutex<Option<(PaneKind, std::time::Instant)>>,
     cached_tmux_agent: Mutex<Option<(String, Option<String>, std::time::Instant)>>,
+    cached_fg_proc: Mutex<ForegroundProcCache>,
 }
 
 impl PtyPane {
@@ -95,6 +104,7 @@ impl PtyPane {
 
         let child = pair.slave.spawn_command(cmd)?;
         let child_pid = child.process_id();
+        let child_arc = Arc::new(Mutex::new(Some(child)));
         drop(pair.slave); // Close slave handle in master process
 
         let master: Box<dyn MasterPty + Send> = pair.master;
@@ -113,7 +123,7 @@ impl PtyPane {
         thread::Builder::new()
             .name(format!("pty-reader-{}", id.0))
             .spawn(move || {
-                let mut buf = [0u8; 4096];
+                let mut buf = [0u8; 32768];
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => {
@@ -148,6 +158,7 @@ impl PtyPane {
             kind,
             master: master_arc,
             writer: writer_arc,
+            child: child_arc,
             vt,
             ring,
             scroll_offset: 0,
@@ -166,6 +177,7 @@ impl PtyPane {
             is_zoomed: false,
             cached_process_kind: Mutex::new(None),
             cached_tmux_agent: Mutex::new(None),
+            cached_fg_proc: Mutex::new(None),
         })
     }
 
@@ -204,6 +216,15 @@ impl PtyPane {
 
     pub fn clear_selection(&mut self) {
         self.selection = None;
+    }
+
+    pub fn kill_child(&mut self) {
+        self.is_alive.store(false, Ordering::SeqCst);
+        if let Ok(mut lock) = self.child.lock() {
+            if let Some(mut child) = lock.take() {
+                let _ = child.kill();
+            }
+        }
     }
 
     pub fn tmux_session_name(&self) -> Option<String> {
@@ -603,15 +624,47 @@ impl Pane for PtyPane {
     }
 
     fn running_process(&self) -> (Option<String>, Vec<String>, Option<PathBuf>) {
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = self.child_pid {
-            if let Some((cmd, args, cwd)) = get_foreground_process(pid) {
-                let cmd_opt = if cmd.is_empty() { None } else { Some(cmd) };
-                return (cmd_opt, args, Some(cwd));
+        if let Ok(mut cache) = self.cached_fg_proc.lock() {
+            if let Some((ref cmd, ref args, ref cwd, ts)) = *cache {
+                if ts.elapsed() < std::time::Duration::from_millis(1500) {
+                    return (cmd.clone(), args.clone(), cwd.clone());
+                }
             }
+            #[cfg(target_os = "linux")]
+            if let Some(pid) = self.child_pid {
+                if let Some((cmd, args, cwd)) = get_foreground_process(pid) {
+                    let cmd_opt = if cmd.is_empty() { None } else { Some(cmd) };
+                    let res = (cmd_opt, args, Some(cwd));
+                    *cache = Some((
+                        res.0.clone(),
+                        res.1.clone(),
+                        res.2.clone(),
+                        std::time::Instant::now(),
+                    ));
+                    return res;
+                }
+            }
+            let res = (self.command.clone(), self.args.clone(), self.cwd.clone());
+            *cache = Some((
+                res.0.clone(),
+                res.1.clone(),
+                res.2.clone(),
+                std::time::Instant::now(),
+            ));
+            return res;
         }
 
         (self.command.clone(), self.args.clone(), self.cwd.clone())
+    }
+
+    fn kill(&mut self) {
+        self.kill_child();
+    }
+}
+
+impl Drop for PtyPane {
+    fn drop(&mut self) {
+        self.kill_child();
     }
 }
 
@@ -675,46 +728,52 @@ pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
     static TMUX_CACHE: std::sync::LazyLock<TmuxAgentCache> =
         std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
-    if let Ok(cache) = TMUX_CACHE.lock() {
+    let mut last_known = None;
+    if let Ok(mut cache) = TMUX_CACHE.lock() {
         if let Some((agent, ts)) = cache.get(session_name) {
             if ts.elapsed() < std::time::Duration::from_millis(2000) {
                 return agent.clone();
             }
+            last_known = agent.clone();
         }
-    }
-
-    let output = std::process::Command::new("tmux")
-        .args([
-            "list-panes",
-            "-s",
-            "-t",
-            session_name,
-            "-F",
-            "#{pane_current_command}",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut detected = None;
-    for line in text.lines() {
-        let cmd = line.trim();
-        if is_known_agent(cmd) {
-            detected = Some(cmd.to_string());
-            break;
-        }
-    }
-
-    if let Ok(mut cache) = TMUX_CACHE.lock() {
+        // Mark timestamp now to debounce concurrent background refreshes
         cache.insert(
             session_name.to_string(),
-            (detected.clone(), std::time::Instant::now()),
+            (last_known.clone(), std::time::Instant::now()),
         );
     }
 
-    detected
+    let sess = session_name.to_string();
+    thread::spawn(move || {
+        let mut detected = None;
+        if let Ok(output) = std::process::Command::new("tmux")
+            .args([
+                "list-panes",
+                "-s",
+                "-t",
+                &sess,
+                "-F",
+                "#{pane_current_command}",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let cmd = line.trim();
+                    if is_known_agent(cmd) {
+                        detected = Some(cmd.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+        if let Ok(mut cache) = TMUX_CACHE.lock() {
+            cache.insert(sess, (detected, std::time::Instant::now()));
+        }
+    });
+
+    last_known
 }
 
 pub fn is_known_agent(cmd: &str) -> bool {

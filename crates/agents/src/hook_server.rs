@@ -1,5 +1,5 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
@@ -25,29 +25,41 @@ impl HookServer {
         // Ensure directory exists
         if let Some(parent) = self.socket_path.parent() {
             fs::create_dir_all(parent)?;
-            // Set 0700 on private runtime directory
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            // Set 0700 on private runtime directory (never on shared system dirs)
+            if parent != Path::new("/tmp") && parent != Path::new("/var/tmp") {
+                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            }
         }
 
-        // Clean up stale socket file if present
-        if self.socket_path.exists() {
-            let _ = fs::remove_file(&self.socket_path);
-        }
+        // Clean up stale socket file if present (remove_file does not follow symlinks)
+        let _ = fs::remove_file(&self.socket_path);
 
         let listener = UnixListener::bind(&self.socket_path)?;
 
         // Ensure 0600 on socket file
         let _ = fs::set_permissions(&self.socket_path, fs::Permissions::from_mode(0o600));
+        let owner_uid = fs::metadata(&self.socket_path).map(|m| m.uid()).ok();
         info!("Hook socket server listening at {:?}", self.socket_path);
 
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
-                    Ok((mut stream, _addr)) => {
+                    Ok((stream, _addr)) => {
+                        if let (Some(expected_uid), Ok(cred)) = (owner_uid, stream.peer_cred()) {
+                            if cred.uid() != expected_uid {
+                                error!(
+                                    "Rejected hook socket connection from unauthorized UID {} (expected {})",
+                                    cred.uid(),
+                                    expected_uid
+                                );
+                                continue;
+                            }
+                        }
                         let tx = event_tx.clone();
                         tokio::spawn(async move {
                             let mut buf = Vec::new();
-                            if stream.read_to_end(&mut buf).await.is_ok() {
+                            let mut limited = stream.take(1024 * 1024); // 1 MB limit to prevent memory exhaustion DoS
+                            if limited.read_to_end(&mut buf).await.is_ok() {
                                 match serde_json::from_slice::<HookPayload>(&buf) {
                                     Ok(payload) => {
                                         info!("Received hook event: {:?}", payload.event);

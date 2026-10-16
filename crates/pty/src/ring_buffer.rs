@@ -22,7 +22,7 @@ impl ScrollbackRing {
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity: capacity.max(1),
-            buffer: VecDeque::with_capacity(capacity.min(4096)),
+            buffer: VecDeque::new(),
             total_added: 0,
         }
     }

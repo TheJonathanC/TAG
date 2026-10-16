@@ -66,6 +66,9 @@ pub enum Action {
     AttachTmux {
         session: String,
     },
+    SpawnApplet {
+        name: String,
+    },
     RestartPane(PaneId),
 
     // Clipboard & Actions

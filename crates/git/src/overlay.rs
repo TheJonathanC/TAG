@@ -12,8 +12,13 @@ use crate::diff::format_diff_lines;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitPromptMode {
     CreateWorktree,
-    ConfirmMerge { worktree_name: String, branch: String },
-    ConfirmDelete { worktree_name: String },
+    ConfirmMerge {
+        worktree_name: String,
+        branch: String,
+    },
+    ConfirmDelete {
+        worktree_name: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -243,11 +248,17 @@ pub fn render_git_overlay(
                     )),
                 ],
             ),
-            GitPromptMode::ConfirmMerge { worktree_name, branch } => (
+            GitPromptMode::ConfirmMerge {
+                worktree_name,
+                branch,
+            } => (
                 " Merge Worktree into Main ",
                 vec![
                     Line::from(Span::styled(
-                        format!(" Merge branch '{}' (worktree '{}') into main?", branch, worktree_name),
+                        format!(
+                            " Merge branch '{}' (worktree '{}') into main?",
+                            branch, worktree_name
+                        ),
                         theme.title_focused,
                     )),
                     Line::from(""),
@@ -261,7 +272,10 @@ pub fn render_git_overlay(
                 " Delete Worktree ",
                 vec![
                     Line::from(Span::styled(
-                        format!(" Remove worktree '{}'? (Branches remain intact)", worktree_name),
+                        format!(
+                            " Remove worktree '{}'? (Branches remain intact)",
+                            worktree_name
+                        ),
                         theme.title_focused,
                     )),
                     Line::from(""),

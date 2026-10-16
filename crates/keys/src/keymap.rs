@@ -110,7 +110,7 @@ impl Keymap {
         leader_bindings.insert('x', (Action::ClosePane, "Close pane"));
         leader_bindings.insert('_', (Action::MinimizePane(None), "Minimize pane"));
         leader_bindings.insert('d', (Action::Detach, "Detach session"));
-        leader_bindings.insert('z', (Action::ToggleZoom, "Toggle zoom"));
+        leader_bindings.insert('z', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert('m', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert(',', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('R', (Action::RenamePane(None), "Rename pane"));
@@ -171,7 +171,7 @@ impl Keymap {
         );
         direct_bindings.insert(
             KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
-            (Action::ToggleZoom, "Toggle zoom"),
+            (Action::ToggleZoom, "Maximize / restore"),
         );
         direct_bindings.insert(
             KeyChord::new(KeyCode::Char('m'), KeyModifiers::ALT),
@@ -212,6 +212,33 @@ impl Keymap {
             leader_bindings,
             direct_bindings,
         }
+    }
+
+    pub fn from_config(
+        config: &tag_core::config::Config,
+        registry: &tag_core::command::CommandRegistry,
+    ) -> Self {
+        let mut keymap = Self::default_preset();
+        if let Some(leader_chord) = KeyChord::parse(&config.leader) {
+            keymap.leader = leader_chord;
+        }
+        for (key_spec, cmd_id) in &config.custom_keys {
+            if let Some(cmd) = registry.find_by_id(cmd_id) {
+                let action = cmd.action.clone();
+                if key_spec.chars().count() == 1 {
+                    if let Some(ch) = key_spec.chars().next() {
+                        keymap
+                            .leader_bindings
+                            .insert(ch, (action, "Custom binding"));
+                    }
+                } else if let Some(chord) = KeyChord::parse(key_spec) {
+                    keymap
+                        .direct_bindings
+                        .insert(chord, (action, "Custom binding"));
+                }
+            }
+        }
+        keymap
     }
 
     pub fn check_conflicts(&self) -> Vec<String> {

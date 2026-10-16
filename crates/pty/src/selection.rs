@@ -11,7 +11,7 @@ pub struct Coord {
     pub row: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     pub start: Coord,
     pub end: Coord,

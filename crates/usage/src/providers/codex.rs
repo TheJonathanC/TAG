@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -59,6 +59,14 @@ impl CodexProvider {
                         .unwrap_or("codex-session")
                         .to_string();
 
+                    let ts = v
+                        .get("timestamp")
+                        .or_else(|| v.get("created_at"))
+                        .and_then(|s| s.as_str())
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(Utc::now);
+
                     events.push(UsageEvent {
                         agent: "codex".into(),
                         session_id,
@@ -69,7 +77,7 @@ impl CodexProvider {
                         output_tokens: out_tok,
                         cache_read,
                         cache_write: 0,
-                        timestamp: Utc::now(),
+                        timestamp: ts,
                     });
                 }
             }

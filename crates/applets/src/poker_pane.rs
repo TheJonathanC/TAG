@@ -55,6 +55,32 @@ impl Pane for PokerPane {
         true
     }
 
+    fn send_input(&mut self, data: &[u8]) {
+        if let Ok(text) = std::str::from_utf8(data) {
+            for c in text.chars() {
+                match c.to_ascii_lowercase() {
+                    'c' => {
+                        let call = self.current_bet.min(self.player_chips);
+                        self.player_chips -= call;
+                        self.pot += call;
+                        self.current_bet = 0;
+                    }
+                    'b' => {
+                        let raise = 50.min(self.player_chips);
+                        self.player_chips -= raise;
+                        self.pot += raise;
+                        self.current_bet += raise;
+                    }
+                    'f' => {
+                        self.pot = 100;
+                        self.current_bet = 25;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn on_resize(&mut self, _width: u16, _height: u16) {}
 
     fn handle_event(&mut self, _event: &AppEvent) -> EventResult {
