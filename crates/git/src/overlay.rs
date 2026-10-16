@@ -137,9 +137,16 @@ pub fn render_git_overlay(
     for (i, f) in status.changed_files.iter().enumerate() {
         let is_sel = state.selected_section == 1 && i == state.selected_index;
         let prefix = if is_sel { "> " } else { "  " };
-        let staged_badge = if f.is_staged { "[S] " } else { "[U] " };
+        let staged_badge = if f.status == "conflict" {
+            "[!] "
+        } else if f.is_staged {
+            "[S] "
+        } else {
+            "[U] "
+        };
 
         let stat_color = match f.status {
+            "conflict" => Color::Magenta,
             "modified" => Color::Yellow,
             "added" | "untracked" => Color::Green,
             "deleted" => Color::Red,

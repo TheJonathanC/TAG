@@ -44,6 +44,7 @@ pub trait GitBackend: Send + Sync {
         repo_path: &std::path::Path,
         branch: &str,
     ) -> Result<String, anyhow::Error>;
+    fn abort_merge(&self, repo_path: &std::path::Path) -> Result<(), anyhow::Error>;
     fn stage_file(&self, path: &std::path::Path, file: &str) -> Result<(), anyhow::Error>;
     fn commit(&self, path: &std::path::Path, message: &str) -> Result<(), anyhow::Error>;
 }

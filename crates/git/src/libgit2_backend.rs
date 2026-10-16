@@ -28,7 +28,14 @@ impl GitBackend for StandardGitBackend {
             let wt_stat = line.as_bytes()[1] as char;
             let path_str = line[3..].trim().to_string();
 
-            let (desc, staged) = if index_stat == '?' && wt_stat == '?' {
+            let is_conflict = index_stat == 'U'
+                || wt_stat == 'U'
+                || (index_stat == 'A' && wt_stat == 'A')
+                || (index_stat == 'D' && wt_stat == 'D');
+
+            let (desc, staged) = if is_conflict {
+                ("conflict", false)
+            } else if index_stat == '?' && wt_stat == '?' {
                 ("untracked", false)
             } else if index_stat != ' ' && index_stat != '?' {
                 let d = match index_stat {
@@ -70,6 +77,20 @@ impl GitBackend for StandardGitBackend {
             "HEAD (detached)".to_string()
         };
 
+        // Check if merge is currently in progress
+        let is_merging = Command::new("git")
+            .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+            .current_dir(path)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        let final_branch = if is_merging {
+            format!("{} [MERGING CONFLICT]", branch)
+        } else {
+            branch
+        };
+
         // Try getting ahead/behind count from upstream tracking branch
         let mut ahead = 0;
         let mut behind = 0;
@@ -92,7 +113,7 @@ impl GitBackend for StandardGitBackend {
         }
 
         Ok(RepoStatus {
-            branch,
+            branch: final_branch,
             ahead,
             behind,
             changed_files,
@@ -283,12 +304,35 @@ impl GitBackend for StandardGitBackend {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
         if !output.status.success() {
-            let msg = if !stderr.is_empty() { stderr } else { stdout };
+            let mut msg = String::new();
+            if !stdout.is_empty() {
+                msg.push_str(&stdout);
+            }
+            if !stderr.is_empty() {
+                if !msg.is_empty() {
+                    msg.push('\n');
+                }
+                msg.push_str(&stderr);
+            }
             return Err(anyhow::anyhow!("Merge failed: {}", msg));
         }
 
         let result = if !stdout.is_empty() { stdout } else { "Merge successful".to_string() };
         Ok(result)
+    }
+
+    fn abort_merge(&self, repo_path: &Path) -> Result<(), anyhow::Error> {
+        let output = Command::new("git")
+            .args(["merge", "--abort"])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("git merge --abort failed: {}", stderr.trim()));
+        }
+
+        Ok(())
     }
 
     fn stage_file(&self, path: &Path, file: &str) -> Result<(), anyhow::Error> {

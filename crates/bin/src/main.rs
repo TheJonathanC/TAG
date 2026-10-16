@@ -262,11 +262,25 @@ impl AppState {
     fn update_usage_summary(&mut self) {
         let today_usage = self.usage_store.query_today().ok();
         self.cached_usage_summary = today_usage.map(|u| {
-            format!(
-                "{:.3}k tok (${:.3})",
-                u.input_tokens as f64 / 1000.0,
-                u.estimated_cost_usd
-            )
+            let total_tokens = u.input_tokens + u.output_tokens;
+            let tok_str = if total_tokens >= 1_000_000 {
+                let m = total_tokens as f64 / 1_000_000.0;
+                if m >= 10.0 {
+                    format!("{:.1}M tok", m)
+                } else {
+                    format!("{:.2}M tok", m)
+                }
+            } else if total_tokens >= 1_000 {
+                let k = total_tokens as f64 / 1_000.0;
+                if k >= 10.0 {
+                    format!("{:.0}k tok", k)
+                } else {
+                    format!("{:.1}k tok", k)
+                }
+            } else {
+                format!("{} tok", total_tokens)
+            };
+            format!("{} (${:.2})", tok_str, u.estimated_cost_usd)
         });
         self.last_usage_query = std::time::Instant::now();
     }
@@ -1203,12 +1217,13 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                                             });
                                         }
                                         Err(e) => {
+                                            state.git_cache = None;
                                             state.toasts.push(Toast {
-                                                title: "Merge Failed".into(),
+                                                title: "Merge Conflict / Error".into(),
                                                 message: format!("{}", e),
                                                 level: ToastLevel::Error,
                                                 created_at: chrono::Utc::now(),
-                                                duration_secs: 5,
+                                                duration_secs: 6,
                                             });
                                         }
                                     }
