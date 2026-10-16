@@ -64,6 +64,9 @@ pub trait Pane: Send + Sync {
     fn scroll_offset(&self) -> usize {
         0
     }
+    fn start_selection(&mut self, _col: u16, _row: u16) {}
+    fn update_selection(&mut self, _col: u16, _row: u16) {}
+    fn clear_selection(&mut self) {}
     fn copy_selection(&mut self) -> Option<String> {
         None
     }

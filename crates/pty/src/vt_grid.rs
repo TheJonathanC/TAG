@@ -85,6 +85,7 @@ impl VtGrid {
         &self,
         _scroll_offset: usize,
         _ring: &ScrollbackRing,
+        selection: Option<&crate::selection::Selection>,
     ) -> Vec<RatLine<'static>> {
         let screen = self.parser.screen();
         let (_num_rows, cols) = screen.size();
@@ -98,7 +99,12 @@ impl VtGrid {
 
             for col in 0..cols {
                 if let Some(cell) = screen.cell(row as u16, col) {
-                    let style = convert_vt_style(cell);
+                    let mut style = convert_vt_style(cell);
+                    if let Some(sel) = selection {
+                        if sel.contains(col, row as u16) {
+                            style = style.add_modifier(Modifier::REVERSED);
+                        }
+                    }
                     let s = cell.contents();
                     let ch = if !s.is_empty() { s.as_str() } else { " " };
 

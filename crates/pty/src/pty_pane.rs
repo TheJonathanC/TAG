@@ -399,6 +399,20 @@ impl Pane for PtyPane {
         self.scroll_offset
     }
 
+    fn start_selection(&mut self, col: u16, row: u16) {
+        self.selection = Some(Selection::new(Coord { col, row }, SelectionMode::Normal));
+    }
+
+    fn update_selection(&mut self, col: u16, row: u16) {
+        if let Some(sel) = &mut self.selection {
+            sel.update(Coord { col, row });
+        }
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
     fn copy_selection(&mut self) -> Option<String> {
         let sel = self.selection.as_ref()?;
         let mut lines = Vec::new();
@@ -553,7 +567,9 @@ impl Pane for PtyPane {
         frame.render_widget(block, area);
 
         // Render viewport text lines
-        let rendered_lines = self.vt.render_viewport(self.scroll_offset, &self.ring);
+        let rendered_lines =
+            self.vt
+                .render_viewport(self.scroll_offset, &self.ring, self.selection.as_ref());
         let paragraph = Paragraph::new(rendered_lines);
         frame.render_widget(paragraph, inner_area);
 

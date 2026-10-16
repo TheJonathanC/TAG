@@ -85,12 +85,29 @@ impl AgentPane {
             .status();
 
         let env = HashMap::new();
-        let args = vec![
-            "new-session".to_string(),
-            "-A".to_string(),
-            "-s".to_string(),
-            session_name.to_string(),
-        ];
+        let has_session = std::process::Command::new("tmux")
+            .args(["has-session", "-t", session_name])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let args = if has_session {
+            let client_session = format!("{}-tag-{}", session_name, id.0);
+            vec![
+                "new-session".to_string(),
+                "-t".to_string(),
+                session_name.to_string(),
+                "-s".to_string(),
+                client_session,
+            ]
+        } else {
+            vec![
+                "new-session".to_string(),
+                "-A".to_string(),
+                "-s".to_string(),
+                session_name.to_string(),
+            ]
+        };
 
         let mut pty = PtyPane::spawn(
             id,
@@ -236,6 +253,18 @@ impl Pane for AgentPane {
 
     fn scroll_offset(&self) -> usize {
         self.pty.scroll_offset()
+    }
+
+    fn start_selection(&mut self, col: u16, row: u16) {
+        Pane::start_selection(&mut self.pty, col, row);
+    }
+
+    fn update_selection(&mut self, col: u16, row: u16) {
+        self.pty.update_selection(col, row);
+    }
+
+    fn clear_selection(&mut self) {
+        self.pty.clear_selection();
     }
 
     fn copy_selection(&mut self) -> Option<String> {
