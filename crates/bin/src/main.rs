@@ -1089,8 +1089,111 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             }
 
             if state.git_state.is_open {
-                if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
-                    state.git_state.is_open = false;
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        state.git_state.is_open = false;
+                    }
+                    KeyCode::Tab => {
+                        state.git_state.selected_section =
+                            (state.git_state.selected_section + 1) % 3;
+                        state.git_state.selected_index = 0;
+                    }
+                    KeyCode::BackTab => {
+                        state.git_state.selected_section =
+                            if state.git_state.selected_section == 0 {
+                                2
+                            } else {
+                                state.git_state.selected_section - 1
+                            };
+                        state.git_state.selected_index = 0;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if state.git_state.selected_section == 2 {
+                            state.git_state.diff_scroll =
+                                state.git_state.diff_scroll.saturating_sub(1);
+                        } else {
+                            state.git_state.selected_index =
+                                state.git_state.selected_index.saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if state.git_state.selected_section == 2 {
+                            state.git_state.diff_scroll =
+                                state.git_state.diff_scroll.saturating_add(1);
+                        } else {
+                            let max_idx = match state.git_state.selected_section {
+                                0 => state
+                                    .git_cache
+                                    .as_ref()
+                                    .map(|c| c.worktrees.len())
+                                    .unwrap_or(0),
+                                1 => state
+                                    .git_cache
+                                    .as_ref()
+                                    .map(|c| c.repo_status.changed_files.len())
+                                    .unwrap_or(0),
+                                _ => 0,
+                            };
+                            if max_idx > 0 && state.git_state.selected_index + 1 < max_idx {
+                                state.git_state.selected_index += 1;
+                            }
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if state.git_state.selected_section == 0 {
+                            if let Some(ref cache) = state.git_cache {
+                                if let Some(wt) =
+                                    cache.worktrees.get(state.git_state.selected_index)
+                                {
+                                    let wt_path = wt.path.clone();
+                                    let wt_name = wt.name.clone();
+                                    state.git_state.is_open = false;
+
+                                    let new_id = state.allocate_pane_id();
+                                    let env = if state.vault.is_unlocked() {
+                                        state.vault.get_env_set()
+                                    } else {
+                                        HashMap::new()
+                                    };
+                                    let (w, h) = if state.term_width > 0 && state.term_height > 0 {
+                                        (
+                                            state.term_width.saturating_sub(2),
+                                            state.term_height.saturating_sub(4),
+                                        )
+                                    } else {
+                                        (80, 24)
+                                    };
+                                    if let Ok(new_pane) = PtyPane::spawn(
+                                        new_id,
+                                        format!("wt: {}", wt_name),
+                                        PaneKind::Shell,
+                                        None,
+                                        &[],
+                                        &env,
+                                        Some(wt_path),
+                                        w,
+                                        h,
+                                        state.config.scrollback_lines,
+                                        state.event_tx.clone(),
+                                    ) {
+                                        state.panes.insert(new_id, Box::new(new_pane));
+                                        let _ = state
+                                            .layout_mgr
+                                            .active_workspace_mut()
+                                            .split_current(new_id, SplitDirection::Vertical);
+                                        state.toasts.push(Toast {
+                                            title: "Worktree Opened".into(),
+                                            message: format!("Opened shell in {}", wt_name),
+                                            level: ToastLevel::Info,
+                                            created_at: chrono::Utc::now(),
+                                            duration_secs: 3,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 return false;
             }

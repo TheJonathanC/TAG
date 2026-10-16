@@ -49,7 +49,7 @@ pub fn render_git_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Git Worktrees & Diff (Esc to close) ")
+        .title(" Git Worktrees & Diff (Tab: Switch | j/k: Select | Enter: Open | Esc: Close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -68,7 +68,11 @@ pub fn render_git_overlay(
 
     // 1. Worktrees list
     let wt_block = Block::default()
-        .title(" Worktrees ")
+        .title(if state.selected_section == 0 {
+            " Worktrees [Active] "
+        } else {
+            " Worktrees "
+        })
         .borders(Borders::ALL)
         .border_style(if state.selected_section == 0 {
             theme.accent
@@ -97,7 +101,11 @@ pub fn render_git_overlay(
 
     // 2. Changed files list
     let files_block = Block::default()
-        .title(format!(" Changes ({}) ", status.changed_files.len()))
+        .title(if state.selected_section == 1 {
+            format!(" Changes ({}) [Active] ", status.changed_files.len())
+        } else {
+            format!(" Changes ({}) ", status.changed_files.len())
+        })
         .borders(Borders::ALL)
         .border_style(if state.selected_section == 1 {
             theme.accent
@@ -132,7 +140,11 @@ pub fn render_git_overlay(
 
     // 3. Diff viewer
     let diff_block = Block::default()
-        .title(" Diff View ")
+        .title(if state.selected_section == 2 {
+            " Diff View [Active] "
+        } else {
+            " Diff View "
+        })
         .borders(Borders::ALL)
         .border_style(if state.selected_section == 2 {
             theme.accent
