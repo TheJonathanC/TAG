@@ -256,7 +256,6 @@ struct AppState {
     cached_usage_summary: Option<String>,
     last_usage_query: std::time::Instant,
     git_cache: Option<CachedGitData>,
-    drag_source_pane: Option<PaneId>,
 }
 
 impl AppState {
@@ -571,7 +570,6 @@ async fn run_app(
         cached_usage_summary: None,
         last_usage_query: std::time::Instant::now(),
         git_cache: None,
-        drag_source_pane: None,
     };
     state.update_usage_summary();
 
@@ -2025,58 +2023,9 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                                         state.layout_mgr.active_workspace_mut().minimize_pane(pid);
                                         return false;
                                     }
-                                } else {
-                                    let rel_col = col.saturating_sub(rect.x + 1);
-                                    let rel_row = row.saturating_sub(rect.y + 1);
-                                    for (&other_pid, p) in state.panes.iter_mut() {
-                                        if other_pid != pid {
-                                            p.clear_selection();
-                                        }
-                                    }
-                                    if let Some(pane) = state.panes.get_mut(&pid) {
-                                        pane.start_selection(rel_col, rel_row);
-                                    }
-                                    state.drag_source_pane = Some(pid);
                                 }
                                 state.layout_mgr.active_workspace_mut().focused_pane = Some(pid);
                                 break;
-                            }
-                        }
-                    }
-                }
-                MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
-                    if let Some(pid) = state.drag_source_pane {
-                        let pane_rects = state
-                            .layout_mgr
-                            .active_workspace()
-                            .compute_rects(content_area);
-                        if let Some(rect) = pane_rects.get(&pid) {
-                            let inner_w = rect.width.saturating_sub(2).max(1);
-                            let inner_h = rect.height.saturating_sub(2).max(1);
-                            let rel_col = mouse.column.saturating_sub(rect.x + 1).min(inner_w.saturating_sub(1));
-                            let rel_row = mouse.row.saturating_sub(rect.y + 1).min(inner_h.saturating_sub(1));
-                            if let Some(pane) = state.panes.get_mut(&pid) {
-                                pane.update_selection(rel_col, rel_row);
-                            }
-                        }
-                    }
-                }
-                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                    if let Some(pid) = state.drag_source_pane.take() {
-                        if let Some(pane) = state.panes.get_mut(&pid) {
-                            if let Some(text) = pane.copy_selection() {
-                                if !text.trim().is_empty() {
-                                    if let Ok(mut cb) = arboard::Clipboard::new() {
-                                        let _ = cb.set_text(text.clone());
-                                    }
-                                    state.toasts.push(Toast {
-                                        title: "Copied to Clipboard".into(),
-                                        message: format!("Selected {} chars", text.len()),
-                                        level: ToastLevel::Info,
-                                        created_at: chrono::Utc::now(),
-                                        duration_secs: 2,
-                                    });
-                                }
                             }
                         }
                     }

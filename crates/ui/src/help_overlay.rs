@@ -142,14 +142,14 @@ pub fn render_help_overlay(
             ],
         ),
         (
-            "10. Mouse & Selection Mechanics",
+            "10. Mouse & Navigation",
             "Independent 50,000-line scrollback ring buffer per pane decoupled from child processes.",
             vec![
                 ("Mouse Wheel / Trackpad", "Scroll Viewport", "Scrolls history without pausing child process output"),
-                ("Left Click Drag", "Text Selection", "Character-level rectangular text selection in terminal"),
-                ("Double Click", "Select Word", "Selects the word under the mouse cursor"),
-                ("Triple Click", "Select Line", "Selects the entire row under the mouse cursor"),
-                ("Shift + Click Drag", "Terminal Bypass", "Bypasses in-app mouse tracking for native emulator selection"),
+                ("Left Click", "Focus Pane", "Click any pane or window to immediately focus it"),
+                ("Header Buttons", "Pane Controls", "Click [_] minimize, [^]/[-] zoom, or [x] close"),
+                ("Shift + Drag", "Terminal Copy", "Native terminal emulator text selection and copy"),
+                ("Right Click", "Paste", "Paste clipboard contents directly into the focused pane"),
             ],
         ),
         (
