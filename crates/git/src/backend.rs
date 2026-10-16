@@ -39,6 +39,11 @@ pub trait GitBackend: Send + Sync {
         force: bool,
     ) -> Result<(), anyhow::Error>;
     fn get_diff(&self, path: &std::path::Path) -> Result<String, anyhow::Error>;
+    fn merge_branch(
+        &self,
+        repo_path: &std::path::Path,
+        branch: &str,
+    ) -> Result<String, anyhow::Error>;
     fn stage_file(&self, path: &std::path::Path, file: &str) -> Result<(), anyhow::Error>;
     fn commit(&self, path: &std::path::Path, message: &str) -> Result<(), anyhow::Error>;
 }

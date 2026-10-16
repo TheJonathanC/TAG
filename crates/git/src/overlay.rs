@@ -9,12 +9,26 @@ use tag_core::theme::Theme;
 use crate::backend::{RepoStatus, WorktreeInfo};
 use crate::diff::format_diff_lines;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitPromptMode {
+    CreateWorktree,
+    ConfirmMerge { worktree_name: String, branch: String },
+    ConfirmDelete { worktree_name: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct GitPromptState {
+    pub mode: GitPromptMode,
+    pub input: String,
+}
+
 #[derive(Default)]
 pub struct GitOverlayState {
     pub is_open: bool,
     pub selected_section: usize, // 0: worktrees, 1: files, 2: diff
     pub selected_index: usize,
     pub diff_scroll: usize,
+    pub prompt: Option<GitPromptState>,
 }
 
 pub fn render_git_overlay(
@@ -49,7 +63,7 @@ pub fn render_git_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Git Worktrees & Diff (Tab: Switch | j/k: Select | Enter: Open | Esc: Close) ")
+        .title(" Git Worktrees & Diff (Tab: Section | Enter: Open | c: New WT | m: Merge | d: Delete | Esc: Close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -97,6 +111,12 @@ pub fn render_git_overlay(
         );
         wt_items.push(ListItem::new(Line::from(vec![span])));
     }
+    if wt_items.is_empty() {
+        wt_items.push(ListItem::new(Line::from(vec![Span::styled(
+            "  (No worktrees found)",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    }
     frame.render_widget(List::new(wt_items).block(wt_block), left_chunks[0]);
 
     // 2. Changed files list
@@ -136,6 +156,12 @@ pub fn render_git_overlay(
             Span::styled(&f.path, theme.text),
         ])));
     }
+    if file_items.is_empty() {
+        file_items.push(ListItem::new(Line::from(vec![Span::styled(
+            "  (Clean working tree - no changes)",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    }
     frame.render_widget(List::new(file_items).block(files_block), left_chunks[1]);
 
     // 3. Diff viewer
@@ -155,13 +181,97 @@ pub fn render_git_overlay(
     let diff_inner = diff_block.inner(chunks[1]);
     frame.render_widget(diff_block, chunks[1]);
 
-    let formatted_lines = format_diff_lines(diff_text);
-    let scrolled_lines: Vec<Line<'static>> = formatted_lines
-        .into_iter()
-        .skip(state.diff_scroll)
-        .take(diff_inner.height as usize)
-        .collect();
+    if diff_text.trim().is_empty() {
+        let empty_p = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No diff to display for current selection.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]);
+        frame.render_widget(empty_p, diff_inner);
+    } else {
+        let formatted_lines = format_diff_lines(diff_text);
+        let scrolled_lines: Vec<Line<'static>> = formatted_lines
+            .into_iter()
+            .skip(state.diff_scroll)
+            .take(diff_inner.height as usize)
+            .collect();
 
-    let p = Paragraph::new(scrolled_lines);
-    frame.render_widget(p, diff_inner);
+        let p = Paragraph::new(scrolled_lines);
+        frame.render_widget(p, diff_inner);
+    }
+
+    // 4. Modal Prompt (if active)
+    if let Some(ref prompt) = state.prompt {
+        let modal_w = 60.min(total_area.width.saturating_sub(4));
+        let modal_h = 7.min(total_area.height.saturating_sub(4));
+        let modal_x = (total_area.width.saturating_sub(modal_w)) / 2;
+        let modal_y = (total_area.height.saturating_sub(modal_h)) / 2;
+        let modal_area = Rect {
+            x: modal_x,
+            y: modal_y,
+            width: modal_w,
+            height: modal_h,
+        };
+
+        frame.render_widget(Clear, modal_area);
+
+        let (title, prompt_lines) = match &prompt.mode {
+            GitPromptMode::CreateWorktree => (
+                " Create New Worktree ",
+                vec![
+                    Line::from(Span::styled(
+                        " Branch / Worktree Name:",
+                        theme.title_focused,
+                    )),
+                    Line::from(Span::styled(
+                        format!(" > {}_", prompt.input),
+                        Style::default().fg(Color::Yellow),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " [Enter] Create & Open   [Esc] Cancel",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ],
+            ),
+            GitPromptMode::ConfirmMerge { worktree_name, branch } => (
+                " Merge Worktree into Main ",
+                vec![
+                    Line::from(Span::styled(
+                        format!(" Merge branch '{}' (worktree '{}') into main?", branch, worktree_name),
+                        theme.title_focused,
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " [Enter / y] Merge   [Esc / n] Cancel",
+                        Style::default().fg(Color::Yellow),
+                    )),
+                ],
+            ),
+            GitPromptMode::ConfirmDelete { worktree_name } => (
+                " Delete Worktree ",
+                vec![
+                    Line::from(Span::styled(
+                        format!(" Remove worktree '{}'? (Branches remain intact)", worktree_name),
+                        theme.title_focused,
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " [Enter / y] Remove   [Esc / n] Cancel",
+                        Style::default().fg(Color::Red),
+                    )),
+                ],
+            ),
+        };
+
+        let modal_block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(theme.accent);
+        let modal_inner = modal_block.inner(modal_area);
+        frame.render_widget(modal_block, modal_area);
+        frame.render_widget(Paragraph::new(prompt_lines), modal_inner);
+    }
 }

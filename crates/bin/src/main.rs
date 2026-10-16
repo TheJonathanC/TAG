@@ -23,7 +23,9 @@ use tag_core::config::Config;
 use tag_core::event::{AppEvent, HookEvent};
 use tag_core::pane::{Pane, PaneId, PaneKind};
 use tag_core::theme::Theme;
-use tag_git::{GitBackend, GitOverlayState, StandardGitBackend};
+use tag_git::{
+    GitBackend, GitOverlayState, GitPromptMode, GitPromptState, StandardGitBackend,
+};
 use tag_keys::KeyStateMachine;
 use tag_layout::{LayoutManager, SavedPane, SavedSession, SavedWorkspace, Workspace};
 use tag_notify::{
@@ -791,6 +793,7 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     }
 
     if state.git_state.is_open {
+        let active_repo_path = get_active_repo_path(state);
         let needs_reload = match &state.git_cache {
             Some(cache) => cache.loaded_at.elapsed() > std::time::Duration::from_secs(3),
             None => true,
@@ -798,15 +801,22 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
         if needs_reload {
             let worktrees = state
                 .git_backend
-                .list_worktrees(&PathBuf::from("."))
+                .list_worktrees(&active_repo_path)
                 .unwrap_or_default();
+
+            let target_path = if let Some(wt) = worktrees.get(state.git_state.selected_index) {
+                wt.path.clone()
+            } else {
+                active_repo_path.clone()
+            };
+
             let repo_status = state
                 .git_backend
-                .repo_status(&PathBuf::from("."))
+                .repo_status(&target_path)
                 .unwrap_or_default();
             let diff = state
                 .git_backend
-                .get_diff(&PathBuf::from("."))
+                .get_diff(&target_path)
                 .unwrap_or_default();
             state.git_cache = Some(CachedGitData {
                 worktrees,
@@ -1089,6 +1099,167 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
             }
 
             if state.git_state.is_open {
+                // If a modal prompt is open within the git overlay
+                if let Some(ref mut prompt) = state.git_state.prompt {
+                    match prompt.mode.clone() {
+                        GitPromptMode::CreateWorktree => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    state.git_state.prompt = None;
+                                }
+                                KeyCode::Backspace => {
+                                    prompt.input.pop();
+                                }
+                                KeyCode::Char(c) => {
+                                    prompt.input.push(c);
+                                }
+                                KeyCode::Enter => {
+                                    let name = prompt.input.trim().to_string();
+                                    state.git_state.prompt = None;
+                                    if !name.is_empty() {
+                                        let active_path = get_active_repo_path(state);
+                                        match state.git_backend.create_worktree(&active_path, &name, &name) {
+                                            Ok(wt_path) => {
+                                                state.git_state.is_open = false;
+                                                state.git_cache = None;
+                                                let new_id = state.allocate_pane_id();
+                                                let env = if state.vault.is_unlocked() {
+                                                    state.vault.get_env_set()
+                                                } else {
+                                                    HashMap::new()
+                                                };
+                                                let (w, h) = if state.term_width > 0 && state.term_height > 0 {
+                                                    (
+                                                        state.term_width.saturating_sub(2),
+                                                        state.term_height.saturating_sub(4),
+                                                    )
+                                                } else {
+                                                    (80, 24)
+                                                };
+                                                if let Ok(new_pane) = PtyPane::spawn(
+                                                    new_id,
+                                                    format!("wt: {}", name),
+                                                    PaneKind::Shell,
+                                                    None,
+                                                    &[],
+                                                    &env,
+                                                    Some(wt_path),
+                                                    w,
+                                                    h,
+                                                    state.config.scrollback_lines,
+                                                    state.event_tx.clone(),
+                                                ) {
+                                                    state.panes.insert(new_id, Box::new(new_pane));
+                                                    let _ = state
+                                                        .layout_mgr
+                                                        .active_workspace_mut()
+                                                        .split_current(new_id, SplitDirection::Vertical);
+                                                    state.toasts.push(Toast {
+                                                        title: "Worktree Created".into(),
+                                                        message: format!("Created worktree and opened shell in {}", name),
+                                                        level: ToastLevel::Success,
+                                                        created_at: chrono::Utc::now(),
+                                                        duration_secs: 3,
+                                                    });
+                                                }
+                                            }
+                                            Err(e) => {
+                                                state.toasts.push(Toast {
+                                                    title: "Worktree Creation Failed".into(),
+                                                    message: format!("{}", e),
+                                                    level: ToastLevel::Error,
+                                                    created_at: chrono::Utc::now(),
+                                                    duration_secs: 5,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            return false;
+                        }
+                        GitPromptMode::ConfirmMerge { branch, .. } => {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                                    state.git_state.prompt = None;
+                                }
+                                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                    state.git_state.prompt = None;
+                                    let active_path = get_active_repo_path(state);
+                                    let main_path = state.git_cache.as_ref()
+                                        .and_then(|c| c.worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone()))
+                                        .unwrap_or(active_path);
+
+                                    match state.git_backend.merge_branch(&main_path, &branch) {
+                                        Ok(msg) => {
+                                            state.git_cache = None;
+                                            state.toasts.push(Toast {
+                                                title: "Worktree Merged".into(),
+                                                message: format!("Branch '{}' merged into main: {}", branch, msg),
+                                                level: ToastLevel::Success,
+                                                created_at: chrono::Utc::now(),
+                                                duration_secs: 4,
+                                            });
+                                        }
+                                        Err(e) => {
+                                            state.toasts.push(Toast {
+                                                title: "Merge Failed".into(),
+                                                message: format!("{}", e),
+                                                level: ToastLevel::Error,
+                                                created_at: chrono::Utc::now(),
+                                                duration_secs: 5,
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            return false;
+                        }
+                        GitPromptMode::ConfirmDelete { worktree_name } => {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                                    state.git_state.prompt = None;
+                                }
+                                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                    state.git_state.prompt = None;
+                                    let active_path = get_active_repo_path(state);
+                                    let main_path = state.git_cache.as_ref()
+                                        .and_then(|c| c.worktrees.iter().find(|w| w.is_main).map(|w| w.path.clone()))
+                                        .unwrap_or(active_path);
+
+                                    match state.git_backend.delete_worktree(&main_path, &worktree_name, false) {
+                                        Ok(_) => {
+                                            state.git_cache = None;
+                                            state.git_state.selected_index = 0;
+                                            state.toasts.push(Toast {
+                                                title: "Worktree Removed".into(),
+                                                message: format!("Worktree '{}' removed", worktree_name),
+                                                level: ToastLevel::Success,
+                                                created_at: chrono::Utc::now(),
+                                                duration_secs: 3,
+                                            });
+                                        }
+                                        Err(e) => {
+                                            state.toasts.push(Toast {
+                                                title: "Removal Failed".into(),
+                                                message: format!("{}", e),
+                                                level: ToastLevel::Error,
+                                                created_at: chrono::Utc::now(),
+                                                duration_secs: 5,
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            return false;
+                        }
+                    }
+                }
+
+                // Normal git overlay navigation
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => {
                         state.git_state.is_open = false;
@@ -1112,8 +1283,11 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                             state.git_state.diff_scroll =
                                 state.git_state.diff_scroll.saturating_sub(1);
                         } else {
-                            state.git_state.selected_index =
-                                state.git_state.selected_index.saturating_sub(1);
+                            let old_idx = state.git_state.selected_index;
+                            state.git_state.selected_index = old_idx.saturating_sub(1);
+                            if state.git_state.selected_section == 0 && state.git_state.selected_index != old_idx {
+                                state.git_cache = None;
+                            }
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
@@ -1136,6 +1310,68 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
                             };
                             if max_idx > 0 && state.git_state.selected_index + 1 < max_idx {
                                 state.git_state.selected_index += 1;
+                                if state.git_state.selected_section == 0 {
+                                    state.git_cache = None;
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('n') | KeyCode::Char('a') => {
+                        if state.git_state.selected_section == 0 {
+                            state.git_state.prompt = Some(GitPromptState {
+                                mode: GitPromptMode::CreateWorktree,
+                                input: String::new(),
+                            });
+                        }
+                    }
+                    KeyCode::Char('m') => {
+                        if state.git_state.selected_section == 0 {
+                            if let Some(ref cache) = state.git_cache {
+                                if let Some(wt) = cache.worktrees.get(state.git_state.selected_index) {
+                                    if !wt.is_main {
+                                        if let Some(ref branch) = wt.branch {
+                                            state.git_state.prompt = Some(GitPromptState {
+                                                mode: GitPromptMode::ConfirmMerge {
+                                                    worktree_name: wt.name.clone(),
+                                                    branch: branch.clone(),
+                                                },
+                                                input: String::new(),
+                                            });
+                                        }
+                                    } else {
+                                        state.toasts.push(Toast {
+                                            title: "Cannot Merge Main".into(),
+                                            message: "Select a feature worktree to merge into main".into(),
+                                            level: ToastLevel::Warning,
+                                            created_at: chrono::Utc::now(),
+                                            duration_secs: 3,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('d') | KeyCode::Char('x') => {
+                        if state.git_state.selected_section == 0 {
+                            if let Some(ref cache) = state.git_cache {
+                                if let Some(wt) = cache.worktrees.get(state.git_state.selected_index) {
+                                    if !wt.is_main {
+                                        state.git_state.prompt = Some(GitPromptState {
+                                            mode: GitPromptMode::ConfirmDelete {
+                                                worktree_name: wt.name.clone(),
+                                            },
+                                            input: String::new(),
+                                        });
+                                    } else {
+                                        state.toasts.push(Toast {
+                                            title: "Cannot Delete Main".into(),
+                                            message: "Cannot remove the primary repository worktree".into(),
+                                            level: ToastLevel::Warning,
+                                            created_at: chrono::Utc::now(),
+                                            duration_secs: 3,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -2339,4 +2575,50 @@ fn get_filtered_tray_items<'a>(items: &'a [TrayItem], query: &str) -> Vec<&'a Tr
             }
         })
         .collect()
+}
+
+fn get_active_repo_path(state: &AppState) -> PathBuf {
+    let mut candidate_path = None;
+
+    if let Some(focused_pid) = state.layout_mgr.active_workspace().focused_pane {
+        if let Some(pane) = state.panes.get(&focused_pid) {
+            let (_, _, cwd) = pane.running_process();
+            if let Some(p) = cwd.or_else(|| pane.cwd()) {
+                if p.exists() {
+                    candidate_path = Some(p);
+                }
+            }
+        }
+    }
+
+    if candidate_path.is_none() {
+        for pane in state.panes.values() {
+            let (_, _, cwd) = pane.running_process();
+            if let Some(p) = cwd.or_else(|| pane.cwd()) {
+                if p.exists() {
+                    candidate_path = Some(p);
+                    break;
+                }
+            }
+        }
+    }
+
+    let search_path = candidate_path.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    });
+
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&search_path)
+        .output()
+    {
+        if output.status.success() {
+            let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !toplevel.is_empty() {
+                return PathBuf::from(toplevel);
+            }
+        }
+    }
+
+    search_path
 }

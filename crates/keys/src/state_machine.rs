@@ -16,6 +16,7 @@ pub struct KeyStateMachine {
     keymap: Keymap,
     state: KeyState,
     leader_press_time: Option<Instant>,
+    #[allow(dead_code)]
     which_key_delay: Duration,
 }
 
@@ -52,12 +53,7 @@ impl KeyStateMachine {
     }
 
     pub fn should_show_which_key(&self) -> bool {
-        if self.state == KeyState::LeaderPending {
-            if let Some(t) = self.leader_press_time {
-                return t.elapsed() >= self.which_key_delay;
-            }
-        }
-        false
+        self.state == KeyState::LeaderPending
     }
 
     pub fn process_key(&mut self, event: KeyEvent) -> Option<Action> {
@@ -94,10 +90,10 @@ impl KeyStateMachine {
                 self.state = KeyState::Normal;
                 self.leader_press_time = None;
 
-                // Check if leader followed by Esc cancels or toggles passthrough
+                // Check if leader followed by Esc cancels
                 match event.code {
                     crossterm::event::KeyCode::Esc => {
-                        return Some(Action::TogglePassthrough);
+                        return None;
                     }
                     crossterm::event::KeyCode::Tab => {
                         return Some(Action::NextWorkspace);
