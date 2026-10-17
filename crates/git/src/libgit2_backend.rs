@@ -496,6 +496,7 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("tag_test_repo_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = std::fs::canonicalize(&temp_dir).unwrap_or(temp_dir);
 
         let init_out = Command::new("git")
             .args(["init", "-b", "main"])
@@ -529,7 +530,11 @@ mod tests {
             .unwrap();
 
         // Must be inside the project folder under .worktrees, NOT in temp_dir.parent()!
-        assert_eq!(wt_path, temp_dir.join(".worktrees").join("feature-x"));
+        let expected_wt = temp_dir.join(".worktrees").join("feature-x");
+        let wt_canon = std::fs::canonicalize(&wt_path).unwrap_or_else(|_| wt_path.clone());
+        let expected_canon =
+            std::fs::canonicalize(&expected_wt).unwrap_or_else(|_| expected_wt.clone());
+        assert_eq!(wt_canon, expected_canon);
         assert!(wt_path.exists());
 
         // Verify .worktrees/ is excluded so it doesn't show in git status
