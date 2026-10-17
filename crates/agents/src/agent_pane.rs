@@ -308,6 +308,10 @@ impl Pane for AgentPane {
         self.pty.running_process()
     }
 
+    fn tmux_session_name(&self) -> Option<String> {
+        self.pty.tmux_session_name()
+    }
+
     fn kill(&mut self) {
         self.pty.kill();
         if let Some(ref sess) = self.client_session.take() {

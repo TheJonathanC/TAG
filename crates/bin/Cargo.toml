@@ -1,6 +1,6 @@
 [package]
 name = "tag"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 edition = "2021"
 description = "Terminal Agent Orchestrator & Developer Multiplexer"
 license = "MIT OR Apache-2.0"

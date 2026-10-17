@@ -56,6 +56,17 @@ pub struct PtyPane {
     cached_fg_proc: Mutex<ForegroundProcCache>,
 }
 
+pub fn clean_tmux_session_name(name: &str) -> String {
+    let s = name.split([' ', '(']).next().unwrap_or(name).trim();
+    if let Some(idx) = s.rfind("-tag-") {
+        let suffix = &s[idx + 5..];
+        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return s[..idx].to_string();
+        }
+    }
+    s.to_string()
+}
+
 impl PtyPane {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
@@ -230,18 +241,33 @@ impl PtyPane {
     pub fn tmux_session_name(&self) -> Option<String> {
         if let Some(idx) = self.args.iter().position(|a| a == "-s" || a == "-t") {
             if let Some(sess) = self.args.get(idx + 1) {
-                return Some(sess.clone());
+                let clean = clean_tmux_session_name(sess);
+                if !clean.is_empty() {
+                    return Some(clean);
+                }
             }
         }
         if self.title.starts_with("tmux: ") {
             let rest = &self.title["tmux: ".len()..];
-            let name = rest.split([' ', '(']).next()?.trim();
-            if !name.is_empty() {
-                return Some(name.to_string());
+            let clean = clean_tmux_session_name(rest);
+            if !clean.is_empty() {
+                return Some(clean);
             }
         }
         #[cfg(target_os = "linux")]
         if let Some(pid) = self.child_pid {
+            let tty = std::fs::read_link(format!("/proc/{}/fd/0", pid))
+                .or_else(|_| std::fs::read_link(format!("/proc/{}/fd/1", pid)))
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            let deepest = get_deepest_child_pid(pid).unwrap_or(pid);
+            if let Some(sess) = get_tmux_session_for_client_or_tty(deepest, tty.as_deref()) {
+                let clean = clean_tmux_session_name(&sess);
+                if !clean.is_empty() {
+                    return Some(clean);
+                }
+            }
+
             if let Some((cmd, args, _)) = get_foreground_process(pid) {
                 let cmd_name = std::path::Path::new(&cmd)
                     .file_name()
@@ -250,16 +276,11 @@ impl PtyPane {
                 if cmd_name == "tmux" {
                     if let Some(idx) = args.iter().position(|a| a == "-s" || a == "-t") {
                         if let Some(sess) = args.get(idx + 1) {
-                            return Some(sess.clone());
+                            let clean = clean_tmux_session_name(sess);
+                            if !clean.is_empty() {
+                                return Some(clean);
+                            }
                         }
-                    }
-                    let tty = std::fs::read_link(format!("/proc/{}/fd/0", pid))
-                        .ok()
-                        .map(|p| p.to_string_lossy().to_string());
-                    let deepest = get_deepest_child_pid(pid).unwrap_or(pid);
-                    if let Some(sess) = get_tmux_session_for_client_or_tty(deepest, tty.as_deref())
-                    {
-                        return Some(sess);
                     }
                     // If only 1 tmux session exists, this tmux client must be attached to it
                     if let Ok(output) = std::process::Command::new("tmux")
@@ -274,7 +295,8 @@ impl PtyPane {
                                 .filter(|l| !l.is_empty())
                                 .collect();
                             if sessions.len() == 1 {
-                                return Some(sessions[0].to_string());
+                                let clean = clean_tmux_session_name(sessions[0]);
+                                return Some(clean);
                             }
                         }
                     }
@@ -350,12 +372,7 @@ impl Pane for PtyPane {
             if let Some(agent) = self.cached_detect_tmux_agent(&session) {
                 return format!("tmux: {} ({})", session, agent);
             }
-            if self.kind == PaneKind::Tmux
-                || self.title.starts_with("tmux:")
-                || self.command.as_deref() == Some("tmux")
-            {
-                return format!("tmux: {}", session);
-            }
+            return format!("tmux: {}", session);
         } else if self.kind == PaneKind::Tmux || self.title.starts_with("tmux:") {
             return self.title.clone();
         }
@@ -719,6 +736,10 @@ impl Pane for PtyPane {
 
     fn kill(&mut self) {
         self.kill_child();
+    }
+
+    fn tmux_session_name(&self) -> Option<String> {
+        self.tmux_session_name()
     }
 }
 
@@ -1142,10 +1163,13 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_agent_in_running_tmux_session_0() {
-        // Session "0" is currently running agy on the host
-        if let Some(agent) = detect_agent_in_tmux("0") {
-            assert_eq!(agent, "agy");
-        }
+    fn test_clean_tmux_session_name() {
+        assert_eq!(clean_tmux_session_name("0"), "0");
+        assert_eq!(clean_tmux_session_name("a"), "a");
+        assert_eq!(clean_tmux_session_name("0-tag-5"), "0");
+        assert_eq!(clean_tmux_session_name("my-sess-tag-12"), "my-sess");
+        assert_eq!(clean_tmux_session_name("dev (agent: agy)"), "dev");
+        assert_eq!(clean_tmux_session_name("tag-session"), "tag-session");
+        assert_eq!(clean_tmux_session_name("my-tag-custom"), "my-tag-custom");
     }
 }

@@ -787,12 +787,68 @@ async fn run_app(
                     } else {
                         HashMap::new()
                     };
+                    let mut cmd = sp.command;
+                    let mut args = sp.args;
+                    let mut title = sp.title;
+                    let mut kind = sp.kind;
+
+                    // Sanitize tmux session on restore
+                    if cmd.as_deref() == Some("tmux")
+                        || kind == PaneKind::Tmux
+                        || title.starts_with("tmux:")
+                    {
+                        let sess_opt =
+                            if let Some(idx) = args.iter().position(|a| a == "-s" || a == "-t") {
+                                args.get(idx + 1)
+                                    .map(|s| tag_pty::clean_tmux_session_name(s))
+                            } else {
+                                title
+                                    .strip_prefix("tmux: ")
+                                    .map(tag_pty::clean_tmux_session_name)
+                            };
+
+                        let target_session = match sess_opt {
+                            Some(s) if !s.is_empty() => s,
+                            _ => {
+                                // Fallback: find existing active tmux session if available
+                                if let Ok(output) = std::process::Command::new("tmux")
+                                    .args(["list-sessions", "-F", "#{session_name}"])
+                                    .output()
+                                {
+                                    if output.status.success() {
+                                        let text = String::from_utf8_lossy(&output.stdout);
+                                        text.lines()
+                                            .map(|l| tag_pty::clean_tmux_session_name(l.trim()))
+                                            .find(|l| !l.is_empty())
+                                            .unwrap_or_else(|| "0".to_string())
+                                    } else {
+                                        "0".to_string()
+                                    }
+                                } else {
+                                    "0".to_string()
+                                }
+                            }
+                        };
+
+                        cmd = Some("tmux".to_string());
+                        args = vec![
+                            "new-session".to_string(),
+                            "-A".to_string(),
+                            "-s".to_string(),
+                            target_session.clone(),
+                        ];
+                        title = format!("tmux: {}", target_session);
+                        if kind != PaneKind::Agent {
+                            kind = PaneKind::Tmux;
+                        }
+                    }
+
                     if let Ok(pane) = PtyPane::spawn(
                         pid,
-                        sp.title,
-                        sp.kind,
-                        sp.command,
-                        &sp.args,
+                        title,
+                        kind,
+                        cmd,
+                        &args,
                         &env,
                         sp.cwd.or_else(|| std::env::current_dir().ok()),
                         term_size.width.saturating_sub(2),
@@ -3187,32 +3243,46 @@ fn save_session_to_disk(state: &AppState) {
     }
     for (&pid, pane) in &state.panes {
         let (_, _, cwd) = pane.running_process();
-        let (command, args) = if let Some(session) = pane.title().strip_prefix("tmux: ") {
-            let s = session.split([' ', '(']).next().unwrap_or(session);
+        let tmux_session = pane.tmux_session_name().or_else(|| {
+            pane.title()
+                .strip_prefix("tmux: ")
+                .and_then(|s| s.split([' ', '(']).next())
+                .filter(|s| !s.is_empty())
+                .map(tag_pty::clean_tmux_session_name)
+        });
+
+        let (command, args, kind, title) = if let Some(session) = tmux_session {
             (
                 Some("tmux".to_string()),
                 vec![
                     "new-session".to_string(),
                     "-A".to_string(),
                     "-s".to_string(),
-                    s.to_string(),
+                    session.clone(),
                 ],
+                if pane.kind() == PaneKind::Agent {
+                    PaneKind::Agent
+                } else {
+                    PaneKind::Tmux
+                },
+                format!("tmux: {}", session),
             )
         } else {
-            match pane.kind() {
+            let (cmd, args) = match pane.kind() {
                 PaneKind::Shell => (None, Vec::new()),
                 _ => {
                     let (cmd, args, _) = pane.running_process();
                     (cmd, args)
                 }
-            }
+            };
+            (cmd, args, pane.kind(), pane.title())
         };
         saved.panes.insert(
             pid,
             SavedPane {
                 id: pid,
-                title: pane.title(),
-                kind: pane.kind(),
+                title,
+                kind,
                 cwd: cwd.or_else(|| pane.cwd()),
                 command,
                 args,

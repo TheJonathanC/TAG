@@ -88,4 +88,7 @@ pub trait Pane: Send + Sync {
     fn running_process(&self) -> (Option<String>, Vec<String>, Option<std::path::PathBuf>) {
         (None, Vec::new(), self.cwd())
     }
+    fn tmux_session_name(&self) -> Option<String> {
+        None
+    }
 }
