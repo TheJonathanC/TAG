@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tag_agents::{get_setup_hooks, AgentPane, AgentProfile, HookServer};
 use tag_applets::{PeerChatPane, PokerPane};
-use tag_clipboard::{wrap_bracketed_paste, ImageBridge, SnippetBank, SnippetOverlayState};
+use tag_clipboard::{
+    copy_to_clipboard, wrap_bracketed_paste, ImageBridge, SnippetBank, SnippetOverlayState,
+};
 use tag_core::action::{Action, Direction, SplitDirection};
 use tag_core::command::CommandRegistry;
 use tag_core::config::Config;
@@ -697,6 +699,12 @@ async fn run_app(
             .status();
         let _ = std::process::Command::new("tmux")
             .args(["set-option", "-g", "mouse", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "set-clipboard", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "allow-passthrough", "on"])
             .status();
         let _ = std::process::Command::new("tmux")
             .args(["set-option", "-g", "window-size", "latest"])
@@ -2095,6 +2103,23 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                 }
             }
 
+            // If focused pane has an active selection and Ctrl+C is pressed, copy the selection
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+            {
+                let has_sel = state
+                    .layout_mgr
+                    .active_workspace()
+                    .focused_pane
+                    .and_then(|pid| state.panes.get(&pid))
+                    .map(|p| p.has_selection())
+                    .unwrap_or(false);
+
+                if has_sel {
+                    return execute_action(state, Action::CopySelection);
+                }
+            }
+
             // In passthrough or normal non-chord mode, forward key to active child pane
             if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
                 if let Some(pane) = state.panes.get_mut(&focused_id) {
@@ -2437,9 +2462,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 pane.update_selection(rel_col, rel_row);
                                 if let Some(text) = pane.copy_selection() {
                                     if !text.is_empty() {
-                                        if let Ok(mut cb) = arboard::Clipboard::new() {
-                                            let _ = cb.set_text(text);
-                                        }
+                                        copy_to_clipboard(&text);
                                         state.toasts.push(Toast {
                                             title: "Clipboard".into(),
                                             message: "Copied selection to clipboard.".into(),
@@ -3017,9 +3040,8 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 if let Some(pane) = state.panes.get_mut(&focused) {
                     if let Some(text) = pane.copy_selection() {
                         if !text.is_empty() {
-                            if let Ok(mut cb) = arboard::Clipboard::new() {
-                                let _ = cb.set_text(text);
-                            }
+                            copy_to_clipboard(&text);
+                            pane.clear_selection();
                             state.toasts.push(Toast {
                                 title: "Clipboard".into(),
                                 message: "Copied selection to clipboard.".into(),
@@ -3027,6 +3049,18 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                                 created_at: chrono::Utc::now(),
                                 duration_secs: 2,
                             });
+                        }
+                    }
+                }
+            }
+        }
+        Action::PasteFromClipboard => {
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                if let Ok(text) = cb.get_text() {
+                    if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
+                        if let Some(pane) = state.panes.get_mut(&focused) {
+                            let wrapped = wrap_bracketed_paste(&text);
+                            pane.send_input(&wrapped);
                         }
                     }
                 }

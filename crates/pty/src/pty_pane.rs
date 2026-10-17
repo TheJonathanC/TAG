@@ -463,6 +463,10 @@ impl Pane for PtyPane {
         self.selection = None;
     }
 
+    fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
     fn copy_selection(&mut self) -> Option<String> {
         let sel = self.selection.as_ref()?;
         let mut lines = Vec::new();

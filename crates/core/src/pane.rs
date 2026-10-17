@@ -68,6 +68,9 @@ pub trait Pane: Send + Sync {
     fn start_selection(&mut self, _col: u16, _row: u16) {}
     fn update_selection(&mut self, _col: u16, _row: u16) {}
     fn clear_selection(&mut self) {}
+    fn has_selection(&self) -> bool {
+        false
+    }
     fn copy_selection(&mut self) -> Option<String> {
         None
     }

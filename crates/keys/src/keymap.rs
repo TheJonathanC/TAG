@@ -137,6 +137,8 @@ impl Keymap {
         leader_bindings.insert('r', (Action::ReloadConfig, "Reload config"));
         leader_bindings.insert('L', (Action::Redraw, "Redraw screen"));
         leader_bindings.insert('U', (Action::Update, "Update TAG"));
+        leader_bindings.insert('y', (Action::CopySelection, "Copy selection / yank"));
+        leader_bindings.insert('c', (Action::CopySelection, "Copy selection"));
         leader_bindings.insert(']', (Action::NextWorkspace, "Next workspace"));
         leader_bindings.insert('[', (Action::PrevWorkspace, "Previous workspace"));
 
@@ -201,6 +203,42 @@ impl Keymap {
                 KeyModifiers::ALT | KeyModifiers::CONTROL,
             ),
             (Action::Redraw, "Redraw screen"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (Action::CopySelection, "Copy selection"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(
+                KeyCode::Char('C'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (Action::CopySelection, "Copy selection"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Char('C'), KeyModifiers::CONTROL),
+            (Action::CopySelection, "Copy selection"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(
+                KeyCode::Char('v'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (Action::PasteFromClipboard, "Paste clipboard"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(
+                KeyCode::Char('V'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            (Action::PasteFromClipboard, "Paste clipboard"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Char('V'), KeyModifiers::CONTROL),
+            (Action::PasteFromClipboard, "Paste clipboard"),
         );
 
         // Alt+1..9 for workspace jumps

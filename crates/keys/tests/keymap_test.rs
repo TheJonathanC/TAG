@@ -61,3 +61,22 @@ fn test_passthrough_toggle() {
     sm.toggle_passthrough();
     assert_eq!(sm.state(), KeyState::Normal);
 }
+
+#[test]
+fn test_copy_selection_direct_chord() {
+    let keymap = Keymap::default_preset();
+    let mut sm = KeyStateMachine::new(keymap, Duration::from_millis(400));
+
+    // Ctrl+Shift+C directly triggers CopySelection
+    let ev = KeyEvent::new(
+        KeyCode::Char('C'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+    let act = sm.process_key(ev);
+    assert_eq!(act, Some(Action::CopySelection));
+
+    // Ctrl+C (uppercase with CONTROL) triggers CopySelection
+    let ev2 = KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL);
+    let act2 = sm.process_key(ev2);
+    assert_eq!(act2, Some(Action::CopySelection));
+}

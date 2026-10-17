@@ -83,6 +83,12 @@ impl AgentPane {
             .args(["set-option", "-g", "mouse", "on"])
             .status();
         let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "set-clipboard", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "allow-passthrough", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
             .args(["set-option", "-g", "window-size", "latest"])
             .status();
         let _ = std::process::Command::new("tmux")
@@ -90,6 +96,12 @@ impl AgentPane {
             .status();
         let _ = std::process::Command::new("tmux")
             .args(["set-option", "-t", session_name, "mouse", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-t", session_name, "set-clipboard", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-t", session_name, "allow-passthrough", "on"])
             .status();
         let _ = std::process::Command::new("tmux")
             .args([
@@ -303,6 +315,10 @@ impl Pane for AgentPane {
 
     fn clear_selection(&mut self) {
         self.pty.clear_selection();
+    }
+
+    fn has_selection(&self) -> bool {
+        self.pty.has_selection()
     }
 
     fn copy_selection(&mut self) -> Option<String> {
