@@ -253,9 +253,29 @@ impl PtyPane {
                             return Some(sess.clone());
                         }
                     }
-                    if let Some(client_pid) = get_deepest_child_pid(pid) {
-                        if let Some(sess) = get_tmux_session_for_client(client_pid) {
-                            return Some(sess);
+                    let tty = std::fs::read_link(format!("/proc/{}/fd/0", pid))
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string());
+                    let deepest = get_deepest_child_pid(pid).unwrap_or(pid);
+                    if let Some(sess) = get_tmux_session_for_client_or_tty(deepest, tty.as_deref())
+                    {
+                        return Some(sess);
+                    }
+                    // If only 1 tmux session exists, this tmux client must be attached to it
+                    if let Ok(output) = std::process::Command::new("tmux")
+                        .args(["list-sessions", "-F", "#{session_name}"])
+                        .output()
+                    {
+                        if output.status.success() {
+                            let text = String::from_utf8_lossy(&output.stdout);
+                            let sessions: Vec<&str> = text
+                                .lines()
+                                .map(|l| l.trim())
+                                .filter(|l| !l.is_empty())
+                                .collect();
+                            if sessions.len() == 1 {
+                                return Some(sessions[0].to_string());
+                            }
                         }
                     }
                 }
@@ -298,6 +318,11 @@ impl PtyPane {
                     .and_then(|n| n.to_str())
                     .unwrap_or(&cmd);
                 if cmd_name == "tmux" {
+                    if let Some(session) = self.tmux_session_name() {
+                        if self.cached_detect_tmux_agent(&session).is_some() {
+                            return PaneKind::Agent;
+                        }
+                    }
                     return PaneKind::Tmux;
                 } else if is_known_agent(cmd_name) {
                     return PaneKind::Agent;
@@ -801,45 +826,76 @@ pub fn get_deepest_child_pid(shell_pid: u32) -> Option<u32> {
     }
 }
 
-type ClientCache = Mutex<Option<(HashMap<u32, String>, std::time::Instant)>>;
+type ClientCache = Mutex<
+    Option<(
+        HashMap<u32, String>,
+        HashMap<String, String>,
+        std::time::Instant,
+    )>,
+>;
 
-pub fn get_tmux_session_for_client(client_pid: u32) -> Option<String> {
+pub fn get_tmux_session_for_client_or_tty(client_pid: u32, tty: Option<&str>) -> Option<String> {
     static CLIENT_CACHE: std::sync::LazyLock<ClientCache> =
         std::sync::LazyLock::new(|| Mutex::new(None));
 
     if let Ok(cache) = CLIENT_CACHE.lock() {
-        if let Some((ref map, ts)) = *cache {
+        if let Some((ref pid_map, ref tty_map, ts)) = *cache {
             if ts.elapsed() < std::time::Duration::from_millis(1500) {
-                if let Some(sess) = map.get(&client_pid) {
+                if let Some(sess) = pid_map.get(&client_pid) {
                     return Some(sess.clone());
                 }
-            }
-        }
-    }
-
-    let mut map = HashMap::new();
-    if let Ok(output) = std::process::Command::new("tmux")
-        .args(["list-clients", "-F", "#{client_pid}\t#{client_session}"])
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() >= 2 {
-                    if let Ok(pid) = parts[0].trim().parse::<u32>() {
-                        map.insert(pid, parts[1].trim().to_string());
+                if let Some(t) = tty {
+                    if let Some(sess) = tty_map.get(t) {
+                        return Some(sess.clone());
                     }
                 }
             }
         }
     }
 
-    let res = map.get(&client_pid).cloned();
+    let mut pid_map = HashMap::new();
+    let mut tty_map = HashMap::new();
+    if let Ok(output) = std::process::Command::new("tmux")
+        .args([
+            "list-clients",
+            "-F",
+            "#{client_pid}\t#{client_tty}\t#{client_session}",
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    if let Ok(pid) = parts[0].trim().parse::<u32>() {
+                        pid_map.insert(pid, parts[2].trim().to_string());
+                    }
+                    let t = parts[1].trim();
+                    if !t.is_empty() {
+                        tty_map.insert(t.to_string(), parts[2].trim().to_string());
+                    }
+                } else if parts.len() >= 2 {
+                    if let Ok(pid) = parts[0].trim().parse::<u32>() {
+                        pid_map.insert(pid, parts[1].trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let res = pid_map
+        .get(&client_pid)
+        .cloned()
+        .or_else(|| tty.and_then(|t| tty_map.get(t).cloned()));
     if let Ok(mut cache) = CLIENT_CACHE.lock() {
-        *cache = Some((map, std::time::Instant::now()));
+        *cache = Some((pid_map, tty_map, std::time::Instant::now()));
     }
     res
+}
+
+pub fn get_tmux_session_for_client(client_pid: u32) -> Option<String> {
+    get_tmux_session_for_client_or_tty(client_pid, None)
 }
 
 type TmuxAgentCache = Mutex<HashMap<String, (Option<String>, std::time::Instant)>>;

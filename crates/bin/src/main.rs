@@ -3187,28 +3187,24 @@ fn save_session_to_disk(state: &AppState) {
     }
     for (&pid, pane) in &state.panes {
         let (_, _, cwd) = pane.running_process();
-        let (command, args) = match pane.kind() {
-            PaneKind::Shell => (None, Vec::new()),
-            PaneKind::Tmux => {
-                let (cmd, running_args, _) = pane.running_process();
-                if let Some(session) = pane.title().strip_prefix("tmux: ") {
-                    let s = session.split_whitespace().next().unwrap_or(session);
-                    (
-                        Some("tmux".to_string()),
-                        vec![
-                            "new-session".to_string(),
-                            "-A".to_string(),
-                            "-s".to_string(),
-                            s.to_string(),
-                        ],
-                    )
-                } else {
-                    (cmd, running_args)
+        let (command, args) = if let Some(session) = pane.title().strip_prefix("tmux: ") {
+            let s = session.split([' ', '(']).next().unwrap_or(session);
+            (
+                Some("tmux".to_string()),
+                vec![
+                    "new-session".to_string(),
+                    "-A".to_string(),
+                    "-s".to_string(),
+                    s.to_string(),
+                ],
+            )
+        } else {
+            match pane.kind() {
+                PaneKind::Shell => (None, Vec::new()),
+                _ => {
+                    let (cmd, args, _) = pane.running_process();
+                    (cmd, args)
                 }
-            }
-            _ => {
-                let (cmd, args, _) = pane.running_process();
-                (cmd, args)
             }
         };
         saved.panes.insert(

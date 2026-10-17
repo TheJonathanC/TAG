@@ -123,35 +123,14 @@ impl AgentPane {
             .status();
 
         let env = HashMap::new();
-        let has_session = std::process::Command::new("tmux")
-            .args(["has-session", "-t", session_name])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        let (args, client_sess) = if has_session {
-            let client_session = format!("{}-tag-{}", session_name, id.0);
-            (
-                vec![
-                    "new-session".to_string(),
-                    "-t".to_string(),
-                    session_name.to_string(),
-                    "-s".to_string(),
-                    client_session.clone(),
-                ],
-                Some(client_session),
-            )
-        } else {
-            (
-                vec![
-                    "new-session".to_string(),
-                    "-A".to_string(),
-                    "-s".to_string(),
-                    session_name.to_string(),
-                ],
-                None,
-            )
-        };
+        // Attach directly to the requested session without creating a temporary suffixed session
+        let args = vec![
+            "new-session".to_string(),
+            "-A".to_string(),
+            "-s".to_string(),
+            session_name.to_string(),
+        ];
+        let client_sess = None;
 
         let mut pty = PtyPane::spawn(
             id,
