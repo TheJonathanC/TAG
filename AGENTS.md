@@ -72,7 +72,6 @@ TAG features built-in version awareness and self-updating:
   - `x86_64-unknown-linux-musl` (Linux x86_64 statically linked musl, runs on any Linux distribution)
   - `aarch64-unknown-linux-gnu` (Linux ARM64 / Raspberry Pi / AWS Graviton, built via `cross`)
   - `aarch64-apple-darwin` (macOS Apple Silicon M1/M2/M3/M4)
-  - `x86_64-apple-darwin` (macOS Intel)
 - Artifacts:
   - `tag-${VERSION}-${TARGET}.tar.gz` (containing `tag`, `cockpit-notify`, `tag-notify`, `README.md`)
   - `tag-${VERSION}-${TARGET}.tar.gz.sha256`

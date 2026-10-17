@@ -71,11 +71,11 @@ case "$OS" in
     case "$ARCH" in
       arm64|aarch64)
         TARGET="aarch64-apple-darwin"
-        FALLBACK_TARGET="x86_64-apple-darwin"
+        FALLBACK_TARGET=""
         ;;
       x86_64|amd64)
-        TARGET="x86_64-apple-darwin"
-        FALLBACK_TARGET=""
+        echo "Error: macOS Intel (x86_64) is not supported. TAG supports Apple Silicon (M1/M2/M3/M4, aarch64-apple-darwin)." >&2
+        exit 1
         ;;
       *)
         echo "Error: Unsupported architecture for macOS: $ARCH" >&2
