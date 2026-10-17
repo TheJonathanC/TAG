@@ -37,6 +37,7 @@ TAG combines PTY process management with agent supervision, a decoupled 60 FPS r
    - [Non-PTY applets (Peer Chat and Texas Hold'em)](#12-non-pty-applets)
    - [Passthrough mode](#13-passthrough-mode)
    - [Theming and visual polish](#14-theming-and-visual-polish)
+   - [Automatic update detection and in-app upgrades](#15-automatic-update-detection-and-in-app-upgrades)
 4. [Complete keyboard shortcut reference](#complete-keyboard-shortcut-reference)
 5. [CLI reference and helper utilities](#cli-reference-and-helper-utilities)
 6. [Configuration files](#configuration-files)
@@ -125,8 +126,8 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 
 ### 2. Independent scrollback and mouse selection
 
-- **What it is:** A 50,000-line circular buffer per pane combined with an in-app text selection engine.
-- **What it does:** Separates viewport navigation from process execution. Scrolling upward lets you inspect past output while the child process continues running. It renders a `[Scrolled: -N lines]` badge. Text selection works despite terminal mouse capture.
+- **What it is:** A 50,000-line circular buffer per pane combined with an in-app text selection engine and dual-layer clipboard integration (local desktop + remote OSC 52 ANSI sequences).
+- **What it does:** Separates viewport navigation from process execution. Scrolling upward lets you inspect past output while the child process continues running without freezing. Selected text is automatically synchronized with your operating system clipboard both on local graphical desktops and over headless remote SSH connections (including Termius, iTerm2, Alacritty, WezTerm, and Kitty). When nested inside `tmux`, TAG automatically transmits DCS passthrough escape envelopes (`\x1bPtmux;...`) and sets `set-clipboard on` and `allow-passthrough on`.
 - **How to use it:**
   - **Scroll:** Use your mouse wheel or trackpad over any pane. TAG dynamically detects alternate screen applications:
     - In **htop, tmux, agy, vim, less**: wheel scrolling sends SGR mouse reporting sequences (if mouse mode is enabled) or Alternate Scroll cursor arrow keys (`Up` / `Down`), scrolling the program directly without clipping.
@@ -136,8 +137,14 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - **Select text:** Click and drag with the left mouse button to highlight a character block.
   - **Select word:** Double-click on any word.
   - **Select line:** Triple-click on any row.
-  - **Copy:** Releasing the mouse automatically copies selected text to your system clipboard using `arboard`.
-  - **Terminal emulator bypass:** Hold `Shift` while dragging to bypass TAG and use your native terminal's selection mechanism.
+  - **Auto-copy on release:** Releasing the left mouse button immediately copies selected text to your local OS clipboard via OSC 52 and desktop clipboard, showing a `Copied selection to clipboard.` confirmation toast.
+  - **Keyboard copy:**
+    - Press `Ctrl+Shift+C` to copy the active selection immediately.
+    - Press `Ctrl+C` with active selection: smart copy copies the selection and clears the highlight. If no text is selected, `Ctrl+C` sends standard `SIGINT` to abort the running command as usual.
+    - Press `Ctrl+Space y` or `Ctrl+Space c` to yank the selection via the leader keymap.
+  - **Keyboard paste:**
+    - Press `Ctrl+Shift+V` to paste clipboard text into the focused pane using safe bracketed paste.
+  - **Terminal emulator bypass:** Hold `Shift` while dragging to bypass TAG's internal mouse capture and invoke your native terminal emulator's client-side selection.
 
 ### 3. Binary tree tiling, pane management, and virtual workspaces
 
@@ -289,6 +296,18 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - Customize colors in `config.toml`.
   - Press `Ctrl+Space r` to reload theme settings without restarting.
 
+### 15. Automatic update detection and in-app upgrades
+
+- **What it is:** In-app version visibility, automatic GitHub Release update detection, and a built-in one-command self-updater.
+- **What it does:**
+  - Displays the active version directly in the status bar (e.g. `v0.1.0-beta.1`), Help overlay (`?`), Empty state banner, and CLI (`tag --version`).
+  - Spawns a lightweight, non-blocking background check against the GitHub Releases API on startup.
+  - Distinguishes release channels: users on stable builds only receive notifications for newer stable releases, while users on beta builds receive notifications for newer betas and stable releases.
+  - When an update is detected, TAG displays a prominent `[▲ v0.2.0]` badge on the status bar and pops an update toast notification.
+- **How to use it:**
+  - **In-App:** Press `Ctrl+Space U` or run `system.update` in the Command Palette (`Ctrl+Space p`).
+  - **From CLI:** Run `tag update` to upgrade to the latest stable release, or `tag update --beta` to upgrade to the latest beta preview.
+
 ---
 
 ## Complete keyboard shortcut reference
@@ -300,7 +319,14 @@ Default leader key: `Ctrl+Space`
 | **Discoverability** | `Ctrl+Space (pause)` | Which-Key | Displays available chords after 400ms pause |
 | | `Ctrl+Space p` | Command Palette | Fuzzy search and run any action |
 | | `F1` or `Ctrl+Space ?` | Help Overlay | Scrollable guide and shortcut reference |
+| | `Ctrl+Space U` | Update TAG | Check for updates and run self-upgrade wizard |
 | | `Ctrl+Space Esc` | Passthrough Mode | Send all keystrokes directly to child app |
+| **Clipboard & Selection** | `Mouse Drag & Release` | Select & Auto-Copy | Draws selection and immediately copies text via OSC 52 + desktop |
+| | `Ctrl+Shift+C` | Copy Selection | Copies highlighted text to clipboard (OSC 52 + local) |
+| | `Ctrl+C (with sel)` | Smart Copy | Copies selection when active; acts as SIGINT abort when no selection |
+| | `Ctrl+Space y` / `c` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
+| | `Ctrl+Shift+V` | Paste Clipboard | Paste text from system clipboard into the focused pane |
+| | `Shift + Mouse Drag` | Terminal Selection | Bypasses in-app mouse capture for terminal emulator native selection |
 | **Navigation** | `Alt+h` / `Ctrl+Space h` | Focus Left | Move focus to left pane |
 | | `Alt+j` / `Ctrl+Space j` | Focus Down | Move focus to bottom pane |
 | | `Alt+k` / `Ctrl+Space k` | Focus Up | Move focus to top pane |
@@ -336,6 +362,14 @@ Main multiplexer binary.
 # Start the orchestrator
 tag
 
+# View version
+tag --version
+tag -V
+
+# Upgrade TAG in-place
+tag update          # Upgrade to latest stable release
+tag update --beta   # Upgrade to latest beta release
+
 # View CLI options
 tag --help
 
@@ -343,6 +377,9 @@ tag --help
 tag setup-hooks claude
 tag setup-hooks codex
 tag setup-hooks agy
+
+# Paste an image into focused pane (SSH friendly)
+tag paste-image /path/to/screenshot.png
 ```
 
 ### `cockpit-notify` / `tag-notify`

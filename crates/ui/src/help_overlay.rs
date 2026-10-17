@@ -51,6 +51,7 @@ pub fn render_help_overlay(
                 ("Ctrl+Space (wait 400ms)", "Which-Key popup", "Shows all available follower keys and actions"),
                 ("Ctrl+Space p", "Command Palette", "Fuzzy-searchable list of all actions with shortcuts"),
                 ("Ctrl+Space ? or F1", "Help Overlay", "This comprehensive guide and shortcut reference"),
+                ("Ctrl+Space U", "Update TAG", "Check for updates and run self-upgrade wizard"),
                 ("Ctrl+Space Esc", "Passthrough Mode", "Bypasses all TAG bindings to send keys directly to child app"),
                 ("Command: tag setup-hooks", "Hook Setup CLI", "Prints configuration diffs to connect agents to TAG"),
             ],
@@ -127,8 +128,13 @@ pub fn render_help_overlay(
         ),
         (
             "8. Clipboard & Snippet Bank",
-            "Structured macro bank and clipboard image bridge for rapid prompt injection.",
+            "Full SSH & local clipboard synchronization via OSC 52, snippets, and image bridge.",
             vec![
+                ("Left Drag & Release", "Auto-Copy (OSC 52)", "Select text with mouse to copy immediately over SSH & local"),
+                ("Ctrl+Shift+C", "Copy Selection", "Copies active selection to clipboard (OSC 52 + local)"),
+                ("Ctrl+C (with sel)", "Smart Copy", "Copies selection when active; acts as SIGINT otherwise"),
+                ("Ctrl+Space y / c", "Yank Selection", "Leader shortcut to copy active selection"),
+                ("Ctrl+Shift+V", "Paste", "Paste from system clipboard into focused pane"),
                 ("Ctrl+Space s", "Snippet Bank", "Searchable catalog of templated prompts and macros"),
                 ("Enter on Snippet", "Bracketed Paste", "Injects multi-line text safely using bracketed paste escapes"),
                 ("{{variable}}", "Templating", "Substitutes variables dynamically before injection"),
@@ -151,8 +157,9 @@ pub fn render_help_overlay(
             vec![
                 ("Mouse Wheel / Trackpad", "Scroll Viewport", "Scrolls history without pausing child process output"),
                 ("Left Click", "Focus Pane", "Click any pane or window to immediately focus it"),
+                ("Left Drag & Release", "Select & Copy", "Draws selection box and copies to clipboard via OSC 52"),
+                ("Shift + Drag", "Terminal Copy", "Bypasses in-app mouse capture for terminal emulator native selection"),
                 ("Header Buttons", "Pane Controls", "Click [_] minimize, [^]/[-] zoom, or [x] close"),
-                ("Shift + Drag", "Terminal Copy", "Native terminal emulator text selection and copy"),
                 ("Right Click", "Paste", "Paste clipboard contents directly into the focused pane"),
             ],
         ),
