@@ -135,6 +135,8 @@ impl Keymap {
         leader_bindings.insert('?', (Action::ToggleHelp, "Help cheat-sheet"));
         leader_bindings.insert('q', (Action::Quit, "Quit"));
         leader_bindings.insert('r', (Action::ReloadConfig, "Reload config"));
+        leader_bindings.insert('L', (Action::Redraw, "Redraw screen"));
+        leader_bindings.insert('U', (Action::Update, "Update TAG"));
         leader_bindings.insert(']', (Action::NextWorkspace, "Next workspace"));
         leader_bindings.insert('[', (Action::PrevWorkspace, "Previous workspace"));
 
@@ -192,6 +194,13 @@ impl Keymap {
         direct_bindings.insert(
             KeyChord::new(KeyCode::F(1), KeyModifiers::empty()),
             (Action::ToggleHelp, "Help cheat-sheet"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(
+                KeyCode::Char('l'),
+                KeyModifiers::ALT | KeyModifiers::CONTROL,
+            ),
+            (Action::Redraw, "Redraw screen"),
         );
 
         // Alt+1..9 for workspace jumps

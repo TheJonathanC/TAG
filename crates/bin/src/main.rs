@@ -46,6 +46,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod update;
+
 const TAG_SESSION_NAME: &str = "tag-session";
 
 fn is_session_running(name: &str) -> bool {
@@ -144,26 +146,37 @@ fn refresh_tmux_commands(registry: &mut CommandRegistry) {
                 {
                     continue;
                 }
-                let cmd = parts.get(1).map(|c| c.trim()).unwrap_or("");
-                let is_agent = tag_pty::is_known_agent(cmd);
-                let (name, desc) = if is_agent {
+                let detected_agent = tag_pty::detect_agent_in_tmux(session);
+                let (name, desc) = if let Some(ref agent) = detected_agent {
                     (
-                        format!("Attach Tmux: {} ({})", session, cmd),
+                        format!("Attach Tmux: {} ({})", session, agent),
                         format!(
                             "Attach to tmux session '{}' running agent '{}'",
-                            session, cmd
+                            session, agent
                         ),
                     )
-                } else if !cmd.is_empty() && cmd != "bash" && cmd != "sh" && cmd != "zsh" {
-                    (
-                        format!("Attach Tmux: {} ({})", session, cmd),
-                        format!("Attach to tmux session '{}' ({})", session, cmd),
-                    )
                 } else {
-                    (
-                        format!("Attach Tmux: {}", session),
-                        format!("Attach to tmux session '{}'", session),
-                    )
+                    let cmd = parts.get(1).map(|c| c.trim()).unwrap_or("");
+                    let is_agent = tag_pty::is_known_agent(cmd);
+                    if is_agent {
+                        (
+                            format!("Attach Tmux: {} ({})", session, cmd),
+                            format!(
+                                "Attach to tmux session '{}' running agent '{}'",
+                                session, cmd
+                            ),
+                        )
+                    } else if !cmd.is_empty() && cmd != "bash" && cmd != "sh" && cmd != "zsh" {
+                        (
+                            format!("Attach Tmux: {} ({})", session, cmd),
+                            format!("Attach to tmux session '{}' ({})", session, cmd),
+                        )
+                    } else {
+                        (
+                            format!("Attach Tmux: {}", session),
+                            format!("Attach to tmux session '{}'", session),
+                        )
+                    }
                 };
                 let cmd_id = format!("agents.attach_tmux_{}", session);
                 let cmd_obj = tag_core::command::Command {
@@ -185,7 +198,7 @@ fn refresh_tmux_commands(registry: &mut CommandRegistry) {
 #[derive(Parser, Debug)]
 #[command(name = "tag")]
 #[command(author = "TAG Team")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "TAG: Terminal Agent Orchestrator & PTY Multiplexer")]
 struct Cli {
     #[command(subcommand)]
@@ -219,6 +232,12 @@ enum Commands {
     PasteImage {
         /// Path to image file (or stdin if omitted or '-')
         file: Option<PathBuf>,
+    },
+    /// Check for updates and update TAG to the latest release
+    Update {
+        /// Install beta / pre-release versions
+        #[arg(long)]
+        beta: bool,
     },
 }
 
@@ -258,6 +277,7 @@ struct AppState {
     notifier: SystemNotifier,
     event_tx: UnboundedSender<AppEvent>,
     is_dirty: bool,
+    needs_clear: bool,
     term_width: u16,
     term_height: u16,
     cached_usage_summary: Option<String>,
@@ -266,6 +286,7 @@ struct AppState {
     terminal_focused: bool,
     last_notification_time: Option<std::time::Instant>,
     selecting_pane: Option<(PaneId, Rect, (u16, u16))>,
+    available_update: Option<String>,
 }
 
 impl AppState {
@@ -346,6 +367,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     if let Some(Commands::PasteImage { file }) = cli.command {
         return handle_paste_image(file);
+    }
+
+    if let Some(Commands::Update { beta }) = cli.command {
+        if let Err(e) = update::run_install_script(beta) {
+            eprintln!("Error updating TAG: {}", e);
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     // Guard against running TAG inside an existing TAG session
@@ -661,13 +690,19 @@ async fn run_app(
         }
     });
 
-    // Ensure tmux has mouse mode globally enabled if tmux is installed (asynchronously)
+    // Ensure tmux has mouse mode and responsive window sizing globally enabled if tmux is installed (asynchronously)
     tokio::task::spawn_blocking(|| {
         let _ = std::process::Command::new("tmux")
             .args(["start-server"])
             .status();
         let _ = std::process::Command::new("tmux")
             .args(["set-option", "-g", "mouse", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "window-size", "latest"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "aggressive-resize", "on"])
             .status();
     });
 
@@ -711,6 +746,7 @@ async fn run_app(
         notifier: SystemNotifier,
         event_tx: event_tx.clone(),
         is_dirty: true,
+        needs_clear: false,
         term_width: 80,
         term_height: 24,
         cached_usage_summary: None,
@@ -719,6 +755,7 @@ async fn run_app(
         terminal_focused: true,
         last_notification_time: None,
         selecting_pane: None,
+        available_update: None,
     };
     state.update_usage_summary();
 
@@ -780,8 +817,24 @@ async fn run_app(
     state.update_usage_summary();
     state.is_dirty = true;
 
+    // Background update check after app startup
+    let update_tx = event_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::task::spawn_blocking(move || {
+            if let Some(newer) = update::check_for_github_update(env!("CARGO_PKG_VERSION")) {
+                let _ = update_tx.send(AppEvent::UpdateAvailable(newer));
+            }
+        });
+    });
+
     // Main event loop
     loop {
+        if state.needs_clear {
+            let _ = terminal.clear();
+            state.needs_clear = false;
+        }
+
         // Render if state is dirty
         if state.is_dirty {
             terminal.draw(|f| {
@@ -962,6 +1015,8 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             attention_count: state.attention_queue.count(),
             token_usage_summary: state.cached_usage_summary.as_deref(),
             theme: &state.theme,
+            version: env!("CARGO_PKG_VERSION"),
+            available_update: state.available_update.as_deref(),
         },
     );
 
@@ -1049,7 +1104,31 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     render_toasts(frame, size, &state.toasts, &state.theme);
 }
 
+fn is_any_overlay_open(state: &AppState) -> bool {
+    state.palette.is_open
+        || state.help_open
+        || state.tour.is_active
+        || state.attention_state.is_open
+        || state.usage_state.is_open
+        || state.git_state.is_open
+        || state.snippet_state.is_open
+        || state.vault_state.is_open
+        || state.rename_prompt.is_some()
+        || state.tab_tray.is_open
+}
+
 fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
+    let was_overlay_open = is_any_overlay_open(state);
+    let should_quit = handle_app_event_inner(state, event);
+    let is_overlay_open = is_any_overlay_open(state);
+    if was_overlay_open != is_overlay_open {
+        state.needs_clear = true;
+        state.is_dirty = true;
+    }
+    should_quit
+}
+
+fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
     match event {
         AppEvent::Action(action) => {
             state.is_dirty = true;
@@ -2434,11 +2513,53 @@ fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
         }
         AppEvent::Resize { width, height } => {
             state.is_dirty = true;
+            state.needs_clear = true;
             state.term_width = width;
             state.term_height = height;
-            for pane in state.panes.values_mut() {
-                pane.on_resize(width, height);
+
+            let main_area = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height: height.saturating_sub(1),
+            };
+            let content_area = if state.tab_tray.is_open {
+                let tray_w = (main_area.width * 25 / 100)
+                    .clamp(24, 45)
+                    .min(main_area.width);
+                Rect {
+                    x: tray_w,
+                    y: 0,
+                    width: main_area.width.saturating_sub(tray_w),
+                    height: main_area.height,
+                }
+            } else {
+                main_area
+            };
+
+            let rects = state.layout_mgr.compute_rects(content_area);
+            for (pane_id, area) in rects {
+                if let Some(pane) = state.panes.get_mut(&pane_id) {
+                    let inner_w = area.width.saturating_sub(2);
+                    let inner_h = area.height.saturating_sub(2);
+                    pane.on_resize(inner_w, inner_h);
+                }
             }
+            false
+        }
+        AppEvent::UpdateAvailable(ver) => {
+            state.available_update = Some(ver.clone());
+            state.toasts.push(Toast {
+                title: "Update Available".into(),
+                message: format!(
+                    "TAG v{} is available! Press Leader+U or run 'tag update' to upgrade.",
+                    ver
+                ),
+                level: ToastLevel::Info,
+                created_at: chrono::Utc::now(),
+                duration_secs: 6,
+            });
+            state.is_dirty = true;
             false
         }
         _ => false,
@@ -2451,8 +2572,49 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             save_session_to_disk(state);
             return true;
         }
+        Action::Redraw => {
+            state.needs_clear = true;
+            state.is_dirty = true;
+            return false;
+        }
+        Action::CheckUpdate => {
+            state.toasts.push(Toast {
+                title: "Checking for updates...".into(),
+                message: "Querying GitHub Releases for new TAG versions...".into(),
+                level: ToastLevel::Info,
+                created_at: chrono::Utc::now(),
+                duration_secs: 3,
+            });
+            let tx = state.event_tx.clone();
+            let current_ver = env!("CARGO_PKG_VERSION").to_string();
+            std::thread::spawn(move || {
+                if let Some(newer) = crate::update::check_for_github_update(&current_ver) {
+                    let _ = tx.send(AppEvent::UpdateAvailable(newer));
+                }
+            });
+            return false;
+        }
+        Action::Update => {
+            let msg = if let Some(ref ver) = state.available_update {
+                format!(
+                    "New TAG v{} ready! Exit TAG and run 'tag update' in your shell to upgrade.",
+                    ver
+                )
+            } else {
+                "Run 'tag update' in your shell to check and update to the latest release.".into()
+            };
+            state.toasts.push(Toast {
+                title: "Update TAG".into(),
+                message: msg,
+                level: ToastLevel::Info,
+                created_at: chrono::Utc::now(),
+                duration_secs: 6,
+            });
+            return false;
+        }
         Action::ToggleTabTray => {
             state.tab_tray.is_open = !state.tab_tray.is_open;
+            state.needs_clear = true;
         }
         Action::ToggleCommandPalette => {
             state.palette.is_open = !state.palette.is_open;
@@ -2503,9 +2665,11 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleZoom => {
             state.layout_mgr.active_workspace_mut().toggle_zoom();
+            state.needs_clear = true;
         }
         Action::UndoLayout => {
             state.layout_mgr.active_workspace_mut().undo_layout();
+            state.needs_clear = true;
         }
         Action::RenamePane(target_pid) => {
             let pid = target_pid.or(state.layout_mgr.active_workspace().focused_pane);
@@ -2571,22 +2735,27 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     .layout_mgr
                     .active_workspace_mut()
                     .split_current(new_id, direction);
+                state.needs_clear = true;
             }
         }
         Action::ClosePane => {
             if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
                 state.layout_mgr.active_workspace_mut().remove_pane(focused);
                 state.panes.remove(&focused);
+                state.needs_clear = true;
             }
         }
         Action::SwitchWorkspace(ws_id) => {
             state.layout_mgr.switch_workspace(ws_id);
+            state.needs_clear = true;
         }
         Action::NextWorkspace => {
             state.layout_mgr.next_workspace();
+            state.needs_clear = true;
         }
         Action::PrevWorkspace => {
             state.layout_mgr.prev_workspace();
+            state.needs_clear = true;
         }
         Action::NewWorkspace => {
             let _new_id = state
@@ -2631,6 +2800,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     .layout_mgr
                     .active_workspace_mut()
                     .add_initial_pane(new_pid);
+                state.needs_clear = true;
             }
         }
         Action::CloseWorkspace(ws_id) => {
@@ -2649,6 +2819,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 for pid in &pids {
                     state.panes.remove(pid);
                 }
+                state.needs_clear = true;
                 state.toasts.push(Toast {
                     title: "Workspace Closed".into(),
                     message: format!("Closed workspace and terminated {} pane(s).", pids.len()),
@@ -2724,6 +2895,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                             .layout_mgr
                             .active_workspace_mut()
                             .split_current(pid, SplitDirection::Vertical);
+                        state.needs_clear = true;
                     }
                     Err(e) => {
                         state.toasts.push(Toast {
@@ -2779,6 +2951,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                         .layout_mgr
                         .active_workspace_mut()
                         .split_current(pid, SplitDirection::Vertical);
+                    state.needs_clear = true;
                 }
                 Err(e) => {
                     state.toasts.push(Toast {
@@ -2880,11 +3053,13 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 .layout_mgr
                 .active_workspace_mut()
                 .split_current(pid, SplitDirection::Vertical);
+            state.needs_clear = true;
         }
         Action::MinimizePane(target_pid) => {
             let pid = target_pid.or(state.layout_mgr.active_workspace().focused_pane);
             if let Some(pid) = pid {
                 state.layout_mgr.active_workspace_mut().minimize_pane(pid);
+                state.needs_clear = true;
                 state.toasts.push(Toast {
                     title: "Pane Minimized".into(),
                     message: "Pane minimized. Press Ctrl+Space b or open Tab Tray to restore."
@@ -2901,6 +3076,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 .active_workspace_mut()
                 .restore_pane(target_pid, None);
             state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+            state.needs_clear = true;
         }
         Action::Detach => {
             save_session_to_disk(state);

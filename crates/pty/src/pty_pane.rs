@@ -2,9 +2,9 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, PtySize};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line as RatLine, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -240,12 +240,33 @@ impl PtyPane {
                 return Some(name.to_string());
             }
         }
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = self.child_pid {
+            if let Some((cmd, args, _)) = get_foreground_process(pid) {
+                let cmd_name = std::path::Path::new(&cmd)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&cmd);
+                if cmd_name == "tmux" {
+                    if let Some(idx) = args.iter().position(|a| a == "-s" || a == "-t") {
+                        if let Some(sess) = args.get(idx + 1) {
+                            return Some(sess.clone());
+                        }
+                    }
+                    if let Some(client_pid) = get_deepest_child_pid(pid) {
+                        if let Some(sess) = get_tmux_session_for_client(client_pid) {
+                            return Some(sess);
+                        }
+                    }
+                }
+            }
+        }
         None
     }
     pub fn cached_detect_tmux_agent(&self, session: &str) -> Option<String> {
         if let Ok(mut cache) = self.cached_tmux_agent.lock() {
             if let Some((ref sess, ref agent, ts)) = *cache {
-                if sess == session && ts.elapsed() < std::time::Duration::from_millis(2000) {
+                if sess == session && ts.elapsed() < std::time::Duration::from_millis(1500) {
                     return agent.clone();
                 }
             }
@@ -262,6 +283,13 @@ impl PtyPane {
     }
 
     fn compute_kind(&self) -> PaneKind {
+        if let Some(session) = self.tmux_session_name() {
+            if self.cached_detect_tmux_agent(&session).is_some() {
+                return PaneKind::Agent;
+            }
+            return PaneKind::Tmux;
+        }
+
         #[cfg(target_os = "linux")]
         if let Some(pid) = self.child_pid {
             if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
@@ -270,11 +298,6 @@ impl PtyPane {
                     .and_then(|n| n.to_str())
                     .unwrap_or(&cmd);
                 if cmd_name == "tmux" {
-                    if let Some(session) = self.tmux_session_name() {
-                        if self.cached_detect_tmux_agent(&session).is_some() {
-                            return PaneKind::Agent;
-                        }
-                    }
                     return PaneKind::Tmux;
                 } else if is_known_agent(cmd_name) {
                     return PaneKind::Agent;
@@ -298,12 +321,18 @@ impl Pane for PtyPane {
     }
 
     fn title(&self) -> String {
-        if self.kind == PaneKind::Tmux || self.title.starts_with("tmux:") {
-            if let Some(session) = self.tmux_session_name() {
-                if let Some(agent) = self.cached_detect_tmux_agent(&session) {
-                    return format!("tmux: {} ({})", session, agent);
-                }
+        if let Some(session) = self.tmux_session_name() {
+            if let Some(agent) = self.cached_detect_tmux_agent(&session) {
+                return format!("tmux: {} ({})", session, agent);
             }
+            if self.kind == PaneKind::Tmux
+                || self.title.starts_with("tmux:")
+                || self.command.as_deref() == Some("tmux")
+            {
+                return format!("tmux: {}", session);
+            }
+        } else if self.kind == PaneKind::Tmux || self.title.starts_with("tmux:") {
+            return self.title.clone();
         }
         self.title.clone()
     }
@@ -502,10 +531,11 @@ impl Pane for PtyPane {
         };
 
         // Construct title bar with metadata and badges
+        let title_str = self.title();
         let mut title_spans = vec![
             Span::styled(format!(" {} ", self.kind().icon()), theme.text),
             Span::styled(
-                format!("{} ", self.title),
+                format!("{} ", title_str),
                 if is_focused {
                     theme.title_focused
                 } else {
@@ -521,7 +551,7 @@ impl Pane for PtyPane {
             ));
         }
 
-        if let Some(status) = self.agent_status_text {
+        if let Some(status) = self.agent_status() {
             title_spans.push(Span::styled(
                 format!(" [{}] ", status),
                 theme.accent.add_modifier(Modifier::BOLD),
@@ -585,6 +615,7 @@ impl Pane for PtyPane {
             .title(RatLine::from(vec![min_btn, zoom_btn, close_btn]).alignment(Alignment::Right));
 
         let inner_area = block.inner(area);
+        frame.render_widget(Clear, area);
         frame.render_widget(block, area);
 
         // Render viewport text lines
@@ -612,13 +643,13 @@ impl Pane for PtyPane {
     }
 
     fn agent_status(&self) -> Option<&'static str> {
-        if let Some(status) = self.agent_status_text {
-            return Some(status);
-        }
         if let Some(session) = self.tmux_session_name() {
             if self.cached_detect_tmux_agent(&session).is_some() {
                 return Some("running");
             }
+        }
+        if let Some(status) = self.agent_status_text {
+            return Some(status);
         }
         None
     }
@@ -742,68 +773,319 @@ fn get_foreground_process(shell_pid: u32) -> Option<(String, Vec<String>, PathBu
     Some((cmd, args, cwd))
 }
 
-type TmuxAgentCache =
-    Mutex<std::collections::HashMap<String, (Option<String>, std::time::Instant)>>;
-
-pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
-    static TMUX_CACHE: std::sync::LazyLock<TmuxAgentCache> =
-        std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-
-    let mut last_known = None;
-    if let Ok(mut cache) = TMUX_CACHE.lock() {
-        if let Some((agent, ts)) = cache.get(session_name) {
-            if ts.elapsed() < std::time::Duration::from_millis(2000) {
-                return agent.clone();
+#[cfg(target_os = "linux")]
+pub fn get_deepest_child_pid(shell_pid: u32) -> Option<u32> {
+    let mut current_pid = shell_pid;
+    for _ in 0..10 {
+        let children_path = format!("/proc/{}/task/{}/children", current_pid, current_pid);
+        if let Ok(children_str) = std::fs::read_to_string(&children_path) {
+            let pids: Vec<u32> = children_str
+                .split_whitespace()
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect();
+            if let Some(&last_child) = pids.last() {
+                current_pid = last_child;
+                continue;
             }
-            last_known = agent.clone();
         }
-        // Mark timestamp now to debounce concurrent background refreshes
-        cache.insert(
-            session_name.to_string(),
-            (last_known.clone(), std::time::Instant::now()),
-        );
+        break;
+    }
+    if current_pid != shell_pid {
+        Some(current_pid)
+    } else {
+        None
+    }
+}
+
+type ClientCache = Mutex<Option<(HashMap<u32, String>, std::time::Instant)>>;
+
+pub fn get_tmux_session_for_client(client_pid: u32) -> Option<String> {
+    static CLIENT_CACHE: std::sync::LazyLock<ClientCache> =
+        std::sync::LazyLock::new(|| Mutex::new(None));
+
+    if let Ok(cache) = CLIENT_CACHE.lock() {
+        if let Some((ref map, ts)) = *cache {
+            if ts.elapsed() < std::time::Duration::from_millis(1500) {
+                if let Some(sess) = map.get(&client_pid) {
+                    return Some(sess.clone());
+                }
+            }
+        }
     }
 
-    let sess = session_name.to_string();
-    thread::spawn(move || {
-        let mut detected = None;
-        if let Ok(output) = std::process::Command::new("tmux")
-            .args([
-                "list-panes",
-                "-s",
-                "-t",
-                &sess,
-                "-F",
-                "#{pane_current_command}",
-            ])
-            .output()
-        {
-            if output.status.success() {
-                let text = String::from_utf8_lossy(&output.stdout);
-                for line in text.lines() {
-                    let cmd = line.trim();
-                    if is_known_agent(cmd) {
-                        detected = Some(cmd.to_string());
-                        break;
+    let mut map = HashMap::new();
+    if let Ok(output) = std::process::Command::new("tmux")
+        .args(["list-clients", "-F", "#{client_pid}\t#{client_session}"])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 2 {
+                    if let Ok(pid) = parts[0].trim().parse::<u32>() {
+                        map.insert(pid, parts[1].trim().to_string());
                     }
                 }
             }
         }
-        if let Ok(mut cache) = TMUX_CACHE.lock() {
-            cache.insert(sess, (detected, std::time::Instant::now()));
-        }
-    });
+    }
 
-    last_known
+    let res = map.get(&client_pid).cloned();
+    if let Ok(mut cache) = CLIENT_CACHE.lock() {
+        *cache = Some((map, std::time::Instant::now()));
+    }
+    res
+}
+
+type TmuxAgentCache = Mutex<HashMap<String, (Option<String>, std::time::Instant)>>;
+
+pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
+    static TMUX_CACHE: std::sync::LazyLock<TmuxAgentCache> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    if let Ok(cache) = TMUX_CACHE.lock() {
+        if let Some((ref agent, ts)) = cache.get(session_name) {
+            if ts.elapsed() < std::time::Duration::from_millis(1500) {
+                return agent.clone();
+            }
+        }
+    }
+
+    let detected = scan_tmux_session_for_agent(session_name);
+
+    if let Ok(mut cache) = TMUX_CACHE.lock() {
+        cache.insert(
+            session_name.to_string(),
+            (detected.clone(), std::time::Instant::now()),
+        );
+    }
+
+    detected
+}
+
+fn scan_tmux_session_for_agent(session_name: &str) -> Option<String> {
+    let output = std::process::Command::new("tmux")
+        .args([
+            "list-panes",
+            "-s",
+            "-t",
+            session_name,
+            "-F",
+            "#{pane_pid}\t#{pane_current_command}\t#{pane_title}",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        let pane_pid: Option<u32> = parts.first().and_then(|p| p.trim().parse().ok());
+        let current_cmd = parts.get(1).map(|c| c.trim()).unwrap_or("");
+        let pane_title = parts.get(2).map(|t| t.trim()).unwrap_or("");
+
+        // 1. Direct check of pane_current_command
+        if is_known_agent(current_cmd) {
+            return Some(normalize_agent_name(current_cmd));
+        }
+
+        // 2. Check process tree under pane_pid (for node, python, wrapper scripts, etc.)
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = pane_pid {
+            if let Some(agent) = inspect_proc_tree_for_agent(pid) {
+                return Some(agent);
+            }
+        }
+
+        // 3. Check pane title
+        if let Some(agent) = detect_agent_from_text(pane_title) {
+            return Some(agent);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_proc_tree_for_agent(root_pid: u32) -> Option<String> {
+    let mut pids_to_check = vec![root_pid];
+    let mut visited = HashSet::new();
+
+    while let Some(current_pid) = pids_to_check.pop() {
+        if !visited.insert(current_pid) {
+            continue;
+        }
+
+        // Check cmdline of current_pid
+        if let Ok(cmdline_bytes) = std::fs::read(format!("/proc/{}/cmdline", current_pid)) {
+            let parts: Vec<String> = cmdline_bytes
+                .split(|&b| b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).to_string())
+                .collect();
+
+            if !parts.is_empty() {
+                if let Some(agent) = detect_agent_from_cmd_and_args(&parts[0], &parts[1..]) {
+                    return Some(agent);
+                }
+            }
+        }
+
+        // Add children of current_pid
+        let children_path = format!("/proc/{}/task/{}/children", current_pid, current_pid);
+        if let Ok(children_str) = std::fs::read_to_string(&children_path) {
+            for child_str in children_str.split_whitespace() {
+                if let Ok(child_pid) = child_str.parse::<u32>() {
+                    pids_to_check.push(child_pid);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub fn detect_agent_from_cmd_and_args(cmd: &str, args: &[String]) -> Option<String> {
+    if is_known_agent(cmd) {
+        return Some(normalize_agent_name(cmd));
+    }
+    for arg in args {
+        if arg.starts_with('-') {
+            continue;
+        }
+        let base = std::path::Path::new(arg)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(arg);
+        if is_known_agent(base) {
+            return Some(normalize_agent_name(base));
+        }
+        let lower = arg.to_lowercase();
+        if lower.contains("claude-code") || lower.contains("@anthropic-ai/claude") {
+            return Some("claude".to_string());
+        }
+        if lower.contains("antigravity-cli") {
+            return Some("agy".to_string());
+        }
+    }
+    None
+}
+
+pub fn detect_agent_from_text(text: &str) -> Option<String> {
+    let lower = text.to_lowercase();
+    let agents = [
+        ("claude", "claude"),
+        ("antigravity", "agy"),
+        ("agy", "agy"),
+        ("codex", "codex"),
+        ("aider", "aider"),
+        ("goose", "goose"),
+        ("cursor", "cursor"),
+        ("gemini", "gemini"),
+        ("copilot", "copilot"),
+        ("cline", "cline"),
+        ("roo", "roo"),
+        ("amp", "amp"),
+        ("windsurf", "windsurf"),
+        ("devin", "devin"),
+    ];
+    for (needle, name) in agents {
+        if lower.contains(needle) {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+pub fn normalize_agent_name(cmd: &str) -> String {
+    let base = std::path::Path::new(cmd)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(cmd)
+        .to_lowercase();
+    base
 }
 
 pub fn is_known_agent(cmd: &str) -> bool {
     let base = std::path::Path::new(cmd)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(cmd);
+        .unwrap_or(cmd)
+        .to_lowercase();
     matches!(
-        base,
-        "agy" | "claude" | "codex" | "aider" | "goose" | "cursor" | "gemini" | "copilot"
+        base.as_str(),
+        "agy"
+            | "claude"
+            | "codex"
+            | "aider"
+            | "goose"
+            | "cursor"
+            | "gemini"
+            | "copilot"
+            | "cline"
+            | "roo"
+            | "amp"
+            | "windsurf"
+            | "chatgpt"
+            | "ollama"
+            | "open-interpreter"
+            | "devin"
+            | "agent"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_known_agent() {
+        assert!(is_known_agent("agy"));
+        assert!(is_known_agent("/home/user/.local/bin/agy"));
+        assert!(is_known_agent("claude"));
+        assert!(is_known_agent("aider"));
+        assert!(is_known_agent("goose"));
+        assert!(!is_known_agent("bash"));
+        assert!(!is_known_agent("zsh"));
+        assert!(!is_known_agent("tmux"));
+        assert!(!is_known_agent("vim"));
+    }
+
+    #[test]
+    fn test_detect_agent_from_text() {
+        assert_eq!(
+            detect_agent_from_text("running agy v1.0"),
+            Some("agy".into())
+        );
+        assert_eq!(
+            detect_agent_from_text("Claude Code v0.2"),
+            Some("claude".into())
+        );
+        assert_eq!(
+            detect_agent_from_text("Antigravity Agent"),
+            Some("agy".into())
+        );
+        assert_eq!(detect_agent_from_text("just random bash prompt"), None);
+    }
+
+    #[test]
+    fn test_detect_agent_in_tmux_nonexistent() {
+        assert_eq!(detect_agent_in_tmux("nonexistent_session_999999"), None);
+    }
+
+    #[test]
+    fn test_detect_agent_in_running_tmux_session_0() {
+        // Session "0" is currently running agy on the host
+        if let Some(agent) = detect_agent_in_tmux("0") {
+            assert_eq!(agent, "agy");
+        }
+    }
 }

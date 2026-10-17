@@ -55,6 +55,7 @@ pub enum AppEvent {
     },
     FocusGained,
     FocusLost,
+    UpdateAvailable(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,7 +1,15 @@
 [package]
 name = "tag"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 edition = "2021"
+description = "Terminal Agent Orchestrator & Developer Multiplexer"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TheJonathanC/TAG"
+homepage = "https://github.com/TheJonathanC/TAG"
+readme = "../../README.md"
+keywords = ["terminal", "multiplexer", "agent", "pty", "tui"]
+categories = ["command-line-utilities", "development-tools"]
+default-run = "tag"
 
 [[bin]]
 name = "tag"
@@ -16,18 +24,18 @@ name = "tag-notify"
 path = "src/tag_notify.rs"
 
 [dependencies]
-tag-core = { path = "../core" }
-tag-pty = { path = "../pty" }
-tag-layout = { path = "../layout" }
-tag-keys = { path = "../keys" }
-tag-ui = { path = "../ui" }
-tag-git = { path = "../git" }
-tag-clipboard = { path = "../clipboard" }
-tag-vault = { path = "../vault" }
-tag-agents = { path = "../agents" }
-tag-notify = { path = "../notify" }
-tag-usage = { path = "../usage" }
-tag-applets = { path = "../applets" }
+tag-core = { path = "../core", version = "0.1.0" }
+tag-pty = { path = "../pty", version = "0.1.0" }
+tag-layout = { path = "../layout", version = "0.1.0" }
+tag-keys = { path = "../keys", version = "0.1.0" }
+tag-ui = { path = "../ui", version = "0.1.0" }
+tag-git = { path = "../git", version = "0.1.0" }
+tag-clipboard = { path = "../clipboard", version = "0.1.0" }
+tag-vault = { path = "../vault", version = "0.1.0" }
+tag-agents = { path = "../agents", version = "0.1.0" }
+tag-notify = { path = "../notify", version = "0.1.0" }
+tag-usage = { path = "../usage", version = "0.1.0" }
+tag-applets = { path = "../applets", version = "0.1.0" }
 tokio = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

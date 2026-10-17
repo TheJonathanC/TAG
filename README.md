@@ -47,10 +47,30 @@ TAG combines PTY process management with agent supervision, a decoupled 60 FPS r
 
 ## Installation and setup
 
-### Prerequisites
-Rust 1.80+ (stable, 2021 edition).
+### Quick install (Linux & macOS)
 
-### Building and installing
+Install the latest pre-compiled binaries with a single command:
+
+```bash
+# Install latest stable release
+curl -fsSL https://raw.githubusercontent.com/TheJonathanC/TAG/main/scripts/install.sh | bash
+
+# Or install latest beta release
+curl -fsSL https://raw.githubusercontent.com/TheJonathanC/TAG/main/scripts/install.sh | bash -s -- --beta
+```
+
+Updating an existing installation:
+```bash
+tag update        # Update to latest stable
+tag update --beta # Update to latest beta
+```
+
+---
+
+### Building from source
+
+Prerequisites: Rust 1.80+ (stable, 2021 edition).
+
 Clone the repository and build the release binaries:
 
 ```bash
@@ -62,7 +82,7 @@ cargo build --release
 The release build generates three executable binaries in `target/release/`:
 - `tag`: The primary orchestrator and multiplexer.
 - `cockpit-notify`: Lightweight helper called by agent notification hooks.
-- `tag-notify`: Alias for `cockpit-notify`.
+- `tag-notify`: Desktop notification daemon helper.
 
 Copy the binaries into your local path:
 

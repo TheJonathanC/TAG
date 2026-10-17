@@ -41,6 +41,9 @@ impl VtGrid {
         self.rows = rows;
         self.parser.set_size(rows, cols);
         self.generation = self.generation.wrapping_add(1);
+        if let Ok(mut cache) = self.cached_viewport.lock() {
+            *cache = None;
+        }
     }
 
     pub fn process(&mut self, data: &[u8], _ring: &mut ScrollbackRing) {
@@ -123,6 +126,11 @@ impl VtGrid {
 
             for col in 0..cols {
                 if let Some(cell) = screen.cell(row as u16, col) {
+                    // Wide character continuation cells are visually part of the previous cell;
+                    // outputting extra spaces here pushes and corrupts line layout.
+                    if cell.is_wide_continuation() {
+                        continue;
+                    }
                     let mut style = convert_vt_style(cell);
                     if let Some(sel) = selection {
                         if sel.contains(col, row as u16) {
@@ -143,6 +151,19 @@ impl VtGrid {
                         current_style = Some(style);
                         current_text.push_str(ch);
                     }
+                } else {
+                    let style = Style::default();
+                    if current_style == Some(style) {
+                        current_text.push(' ');
+                    } else {
+                        if !current_text.is_empty() {
+                            if let Some(st) = current_style {
+                                spans.push(Span::styled(std::mem::take(&mut current_text), st));
+                            }
+                        }
+                        current_style = Some(style);
+                        current_text.push(' ');
+                    }
                 }
             }
             if !current_text.is_empty() {
@@ -151,6 +172,10 @@ impl VtGrid {
                 }
             }
             lines.push(RatLine::from(spans));
+        }
+
+        while lines.len() < visible_rows {
+            lines.push(RatLine::raw(""));
         }
 
         if let Ok(mut cache) = self.cached_viewport.lock() {

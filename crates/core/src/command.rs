@@ -366,6 +366,30 @@ impl CommandRegistry {
                 default_shortcut: None,
                 action: Action::StartTour,
             },
+            Command {
+                id: "system.redraw".into(),
+                name: "Redraw Screen / Clear Artifacts".into(),
+                category: CommandCategory::System,
+                description: "Force clear terminal and redraw all panes and UI".into(),
+                default_shortcut: Some("^Space+L / Alt+Ctrl+l".into()),
+                action: Action::Redraw,
+            },
+            Command {
+                id: "system.check_update".into(),
+                name: "Check for Updates".into(),
+                category: CommandCategory::System,
+                description: "Check GitHub Releases for new TAG versions".into(),
+                default_shortcut: None,
+                action: Action::CheckUpdate,
+            },
+            Command {
+                id: "system.update".into(),
+                name: "Update TAG".into(),
+                category: CommandCategory::System,
+                description: "Update TAG to the latest version".into(),
+                default_shortcut: Some("^Space+U".into()),
+                action: Action::Update,
+            },
         ];
 
         for cmd in defaults {

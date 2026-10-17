@@ -1,7 +1,7 @@
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 use tag_core::theme::Theme;
@@ -10,6 +10,8 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme, minimize
     if area.width < 10 || area.height < 5 {
         return;
     }
+
+    frame.render_widget(Clear, area);
 
     let ascii_art = [
         r"  ████████╗  █████╗   ██████╗ ",
@@ -55,6 +57,10 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme, minimize
             Span::styled(
                 "TERMINAL AGENT ORCHESTRATOR & MULTIPLEXER",
                 theme.title_focused.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  v{}", env!("CARGO_PKG_VERSION")),
+                theme.text.add_modifier(Modifier::DIM),
             ),
             Span::styled(" //", theme.accent),
         ])

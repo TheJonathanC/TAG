@@ -15,6 +15,8 @@ pub struct StatusBarProps<'a> {
     pub attention_count: usize,
     pub token_usage_summary: Option<&'a str>,
     pub theme: &'a Theme,
+    pub version: &'a str,
+    pub available_update: Option<&'a str>,
 }
 
 pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
@@ -94,34 +96,52 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
         ));
     }
 
-    // Fill space before hints
+    // Right-aligned elements: update indicator (if any) and version
+    let mut right_spans = Vec::new();
+    if let Some(update_ver) = props.available_update {
+        right_spans.push(Span::styled(
+            format!(" [▲ v{}] ", update_ver),
+            props.theme.warning.add_modifier(Modifier::BOLD),
+        ));
+    }
+    right_spans.push(Span::styled(
+        format!("v{} ", props.version),
+        props.theme.text.add_modifier(Modifier::DIM),
+    ));
+
+    let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
     let current_len: usize = spans.iter().map(|s| s.width()).sum();
-    let spaces = area.width as usize - current_len.min(area.width as usize);
+    let available_middle = (area.width as usize).saturating_sub(current_len + right_width);
+
     let hints = if is_zoomed {
-        if spaces >= 52 {
+        if available_middle >= 52 {
             "^Space: m Restore · x Close · p Palette · Alt+Enter"
-        } else if spaces >= 30 {
+        } else if available_middle >= 30 {
             "^Space: m Restore · p Palette"
         } else {
             ""
         }
-    } else if spaces >= 48 {
+    } else if available_middle >= 48 {
         "^Space: m Max · x Close · , Rename · p Palette"
-    } else if spaces >= 28 {
+    } else if available_middle >= 28 {
         "^Space: p Palette · ? Help"
     } else {
         ""
     };
 
     let hints_width = Span::raw(hints).width();
-    if !hints.is_empty() && spaces > hints_width + 1 {
-        let pad = " ".repeat(spaces - hints_width - 1);
+    if available_middle > hints_width {
+        let pad = " ".repeat(available_middle - hints_width);
         spans.push(Span::raw(pad));
+    }
+    if !hints.is_empty() {
         spans.push(Span::styled(
             hints,
             props.theme.text.add_modifier(Modifier::DIM),
         ));
     }
+
+    spans.extend(right_spans);
 
     let line = Line::from(spans);
     let p = Paragraph::new(line);

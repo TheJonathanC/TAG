@@ -82,4 +82,7 @@ pub enum Action {
     ToggleBackgroundMode,
     ReloadConfig,
     StartTour,
+    Redraw,
+    CheckUpdate,
+    Update,
 }

@@ -83,7 +83,31 @@ impl AgentPane {
             .args(["set-option", "-g", "mouse", "on"])
             .status();
         let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "window-size", "latest"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-g", "aggressive-resize", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
             .args(["set-option", "-t", session_name, "mouse", "on"])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args([
+                "set-window-option",
+                "-t",
+                session_name,
+                "window-size",
+                "latest",
+            ])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args([
+                "set-window-option",
+                "-t",
+                session_name,
+                "aggressive-resize",
+                "on",
+            ])
             .status();
 
         let env = HashMap::new();
@@ -209,6 +233,11 @@ impl Pane for AgentPane {
 
     fn agent_status(&self) -> Option<&'static str> {
         if self.profile_name == "tmux" {
+            if let Some(session) = self.pty.tmux_session_name() {
+                if self.pty.cached_detect_tmux_agent(&session).is_some() {
+                    return Some("running");
+                }
+            }
             if let Some(st) = self.pty.agent_status() {
                 return Some(st);
             }

@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use tag_core::pane::{PaneId, WorkspaceId};
@@ -39,6 +39,8 @@ pub fn render_tab_tray(
     if !state.is_open || area.width < 10 {
         return;
     }
+
+    frame.render_widget(Clear, area);
 
     // Filter items by search query
     let filtered_items: Vec<&TrayItem> = items
