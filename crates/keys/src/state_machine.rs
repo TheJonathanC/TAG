@@ -127,6 +127,16 @@ impl KeyStateMachine {
                         if let Some((action, _desc)) = self.keymap.leader_bindings.get(&ch) {
                             return Some(action.clone());
                         }
+
+                        // Try case-inverted lookup if exact case not found
+                        let alt_ch = if ch.is_ascii_uppercase() {
+                            ch.to_ascii_lowercase()
+                        } else {
+                            ch.to_ascii_uppercase()
+                        };
+                        if let Some((action, _desc)) = self.keymap.leader_bindings.get(&alt_ch) {
+                            return Some(action.clone());
+                        }
                     }
                     _ => {}
                 }

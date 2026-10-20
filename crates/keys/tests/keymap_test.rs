@@ -80,3 +80,42 @@ fn test_copy_selection_direct_chord() {
     let act2 = sm.process_key(ev2);
     assert_eq!(act2, Some(Action::CopySelection));
 }
+
+#[test]
+fn test_paste_clipboard_chords() {
+    let keymap = Keymap::default_preset();
+    let mut sm = KeyStateMachine::new(keymap, Duration::from_millis(400));
+
+    // Direct Ctrl+Shift+V
+    let ev = KeyEvent::new(
+        KeyCode::Char('V'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+    assert_eq!(sm.process_key(ev), Some(Action::PasteFromClipboard));
+
+    // Direct Shift+Insert
+    let ev_ins = KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT);
+    assert_eq!(sm.process_key(ev_ins), Some(Action::PasteFromClipboard));
+
+    // Leader + p
+    let leader = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL);
+    assert_eq!(sm.process_key(leader), None);
+    assert_eq!(sm.state(), KeyState::LeaderPending);
+    let p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(p), Some(Action::PasteFromClipboard));
+
+    // Leader + V
+    assert_eq!(sm.process_key(leader), None);
+    let v_shift = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::SHIFT);
+    assert_eq!(sm.process_key(v_shift), Some(Action::PasteFromClipboard));
+
+    // Leader + v
+    assert_eq!(sm.process_key(leader), None);
+    let v_key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(v_key), Some(Action::PasteFromClipboard));
+
+    // Leader + e (Vault)
+    assert_eq!(sm.process_key(leader), None);
+    let e_key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(e_key), Some(Action::ToggleVaultOverlay));
+}

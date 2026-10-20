@@ -45,7 +45,7 @@ pub fn render_snippet_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Snippet Bank (Enter to insert, Esc to close) ")
+        .title(" Snippet Bank (~/.config/tag/snippets.toml | Enter: Insert, Esc: Close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 

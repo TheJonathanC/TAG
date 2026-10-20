@@ -143,7 +143,8 @@ TAG follows the rule: **discoverable by default, fast once learned.**
     - Press `Ctrl+C` with active selection: smart copy copies the selection and clears the highlight. If no text is selected, `Ctrl+C` sends standard `SIGINT` to abort the running command as usual.
     - Press `Ctrl+Space y` or `Ctrl+Space c` to yank the selection via the leader keymap.
   - **Keyboard paste:**
-    - Press `Ctrl+Shift+V` to paste clipboard text into the focused pane using safe bracketed paste.
+    - Press `Ctrl+Space v` or `Ctrl+Space p` to paste via the leader keymap.
+    - Press `Ctrl+Shift+V` or `Shift+Insert` to paste clipboard text into the focused pane using safe bracketed paste.
   - **Terminal emulator bypass:** Hold `Shift` while dragging to bypass TAG's internal mouse capture and invoke your native terminal emulator's client-side selection.
 
 ### 3. Binary tree tiling, pane management, and virtual workspaces
@@ -244,6 +245,14 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - *Image bridge:* Reads PNG image data directly from your OS clipboard, writes it to `.orchestrator/cache/img_<timestamp>.png`, automatically adds the cache path to `.git/info/exclude`, and injects the file path into the active terminal pane.
 - **How to use it:**
   - **Insert snippet:** Press `Ctrl+Space s`, choose a template, and press `Enter`.
+  - **Add custom snippets:** Edit `~/.config/tag/snippets.toml`. Snippets are dynamically reloaded every time the overlay is opened:
+    ```toml
+    [[snippets]]
+    name = "deploy-prod"
+    description = "Build and release to production"
+    tags = ["deploy", "prod"]
+    template = "npm run build && fly deploy --app {{app_name}}"
+    ```
   - **Paste clipboard image:** Copy an image from your browser or screenshot tool, switch to TAG, and press `Ctrl+Space i`. The local file path is pasted into your prompt.
   - **Over SSH:**
     - Option 1 (X11 Forwarding): Connect with `ssh -X` or `ssh -Y` for direct clipboard access from your local machine.
@@ -265,7 +274,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 - **What it is:** An encrypted credential vault protected by Argon2id key derivation and ChaCha20-Poly1305 authenticated encryption.
 - **What it does:** Holds API keys (such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) in memory using `secrecy` and `zeroize` types. Injects keys directly into child PTY environments at spawn time without passing secrets on command lines or saving them to shell history. Locks automatically after an idle timeout.
 - **How to use it:**
-  - Press `Ctrl+Space v` to open the Vault overlay.
+  - Press `Ctrl+Space e` to open the Vault overlay.
   - Enter your master passphrase to unlock the vault.
   - Configured keys are injected into all subsequently spawned agent and shell panes.
   - See [docs/SECURITY.md](docs/SECURITY.md) for the threat model and security boundaries.
@@ -325,7 +334,8 @@ Default leader key: `Ctrl+Space`
 | | `Ctrl+Shift+C` | Copy Selection | Copies highlighted text to clipboard (OSC 52 + local) |
 | | `Ctrl+C (with sel)` | Smart Copy | Copies selection when active; acts as SIGINT abort when no selection |
 | | `Ctrl+Space y` / `c` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
-| | `Ctrl+Shift+V` | Paste Clipboard | Paste text from system clipboard into the focused pane |
+| | `Ctrl+Space v` / `p` | Paste Clipboard | Leader shortcut to paste text from clipboard into focused pane |
+| | `Ctrl+Shift+V` / `Shift+Ins` | Paste Clipboard | Paste text from system clipboard into the focused pane |
 | | `Shift + Mouse Drag` | Terminal Selection | Bypasses in-app mouse capture for terminal emulator native selection |
 | **Navigation** | `Alt+h` / `Ctrl+Space h` | Focus Left | Move focus to left pane |
 | | `Alt+j` / `Ctrl+Space j` | Focus Down | Move focus to bottom pane |
@@ -347,7 +357,7 @@ Default leader key: `Ctrl+Space`
 | **Tools & Git** | `Ctrl+Space g` | Git Worktrees | Worktree lifecycle, status, and diff viewer |
 | | `Ctrl+Space s` | Snippet Bank | Insert templated macros via bracketed paste |
 | | `Ctrl+Space i` | Image Bridge | Paste clipboard image and insert local path |
-| | `Ctrl+Space v` | Secrets Vault | Encrypted storage and agent env injection |
+| | `Ctrl+Space e` | Secrets Vault | Encrypted storage and agent env injection |
 | | `Ctrl+Space r` | Reload Config | Hot reload keybindings and theme |
 | | `Ctrl+Space q` | Quit | Clean shutdown and terminal state restore |
 
@@ -380,6 +390,13 @@ tag setup-hooks agy
 
 # Paste an image into focused pane (SSH friendly)
 tag paste-image /path/to/screenshot.png
+
+# Manage encrypted secrets vault
+tag vault set ANTHROPIC_API_KEY      # Prompts securely for secret value
+tag vault set OPENAI_API_KEY "sk-..." # Or provide inline / piped
+tag vault list                       # List all stored secret keys
+tag vault get ANTHROPIC_API_KEY      # Retrieve secret value
+tag vault remove ANTHROPIC_API_KEY   # Delete secret from vault
 ```
 
 ### `cockpit-notify` / `tag-notify`

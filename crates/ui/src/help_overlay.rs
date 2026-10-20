@@ -49,7 +49,7 @@ pub fn render_help_overlay(
             "TAG uses Ctrl+Space as the leader key. It never conflicts with readline (Ctrl+A) or tmux (Ctrl+B).",
             vec![
                 ("Ctrl+Space (wait 400ms)", "Which-Key popup", "Shows all available follower keys and actions"),
-                ("Ctrl+Space p", "Command Palette", "Fuzzy-searchable list of all actions with shortcuts"),
+                ("Ctrl+Space Space / :", "Command Palette", "Fuzzy-searchable list of all actions with shortcuts"),
                 ("Ctrl+Space ? or F1", "Help Overlay", "This comprehensive guide and shortcut reference"),
                 ("Ctrl+Space U", "Update TAG", "Check for updates and run self-upgrade wizard"),
                 ("Ctrl+Space Esc", "Passthrough Mode", "Bypasses all TAG bindings to send keys directly to child app"),
@@ -134,7 +134,8 @@ pub fn render_help_overlay(
                 ("Ctrl+Shift+C", "Copy Selection", "Copies active selection to clipboard (OSC 52 + local)"),
                 ("Ctrl+C (with sel)", "Smart Copy", "Copies selection when active; acts as SIGINT otherwise"),
                 ("Ctrl+Space y / c", "Yank Selection", "Leader shortcut to copy active selection"),
-                ("Ctrl+Shift+V", "Paste", "Paste from system clipboard into focused pane"),
+                ("Ctrl+Space v / p", "Paste Clipboard", "Leader shortcut to paste system/TAG clipboard into focused pane"),
+                ("Ctrl+Shift+V / Shift+Ins", "Native Paste", "Direct paste via terminal bracketed paste or Shift+Insert"),
                 ("Ctrl+Space s", "Snippet Bank", "Searchable catalog of templated prompts and macros"),
                 ("Enter on Snippet", "Bracketed Paste", "Injects multi-line text safely using bracketed paste escapes"),
                 ("{{variable}}", "Templating", "Substitutes variables dynamically before injection"),
@@ -146,7 +147,8 @@ pub fn render_help_overlay(
             "9. Secrets Vault & Environment Injection",
             "Encrypted credential store at rest using Argon2id and ChaCha20-Poly1305 authenticated encryption.",
             vec![
-                ("Ctrl+Space v", "Secrets Vault", "Unlock vault with passphrase, view keys, and configure env sets"),
+                ("Ctrl+Space e", "Secrets Vault", "Unlock vault, press [a] to add secrets, [d] to delete, view keys"),
+                ("tag vault set", "CLI Vault Manage", "Set, list, get, or remove secrets directly from terminal/scripts"),
                 ("Auto Injection", "PTY Spawn Injection", "Injects API keys into agent environments without shell history leaks"),
                 ("Auto-Lock", "Idle Timeout", "Zeroizes memory and locks vault after configured idle period"),
             ],

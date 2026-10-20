@@ -129,9 +129,14 @@ impl Keymap {
         leader_bindings.insert('g', (Action::ToggleGitOverlay, "Git worktrees"));
         leader_bindings.insert('s', (Action::ToggleSnippetOverlay, "Snippets"));
         leader_bindings.insert('i', (Action::PasteImageBridge, "Paste image"));
-        leader_bindings.insert('v', (Action::ToggleVaultOverlay, "Vault"));
+        leader_bindings.insert('v', (Action::PasteFromClipboard, "Paste clipboard"));
+        leader_bindings.insert('V', (Action::PasteFromClipboard, "Paste clipboard"));
+        leader_bindings.insert('p', (Action::PasteFromClipboard, "Paste clipboard"));
+        leader_bindings.insert('P', (Action::PasteFromClipboard, "Paste clipboard"));
+        leader_bindings.insert('e', (Action::ToggleVaultOverlay, "Vault (Secrets & Env)"));
+        leader_bindings.insert('E', (Action::ToggleVaultOverlay, "Vault (Secrets & Env)"));
         leader_bindings.insert('n', (Action::ToggleDnd, "Do Not Disturb"));
-        leader_bindings.insert('p', (Action::ToggleCommandPalette, "Command palette"));
+        leader_bindings.insert(':', (Action::ToggleCommandPalette, "Command palette"));
         leader_bindings.insert('?', (Action::ToggleHelp, "Help cheat-sheet"));
         leader_bindings.insert('q', (Action::Quit, "Quit"));
         leader_bindings.insert('r', (Action::ReloadConfig, "Reload config"));
@@ -238,6 +243,14 @@ impl Keymap {
         );
         direct_bindings.insert(
             KeyChord::new(KeyCode::Char('V'), KeyModifiers::CONTROL),
+            (Action::PasteFromClipboard, "Paste clipboard"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+            (Action::PasteFromClipboard, "Paste clipboard"),
+        );
+        direct_bindings.insert(
+            KeyChord::new(KeyCode::Insert, KeyModifiers::SHIFT),
             (Action::PasteFromClipboard, "Paste clipboard"),
         );
 

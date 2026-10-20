@@ -13,6 +13,17 @@ use tag_pty::PtyPane;
 use crate::profile::AgentProfile;
 use crate::status::AgentStatus;
 
+fn run_tmux_silent(args: &[&str]) -> bool {
+    std::process::Command::new("tmux")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub struct AgentPane {
     pty: PtyPane,
     profile_name: String,
@@ -76,51 +87,29 @@ impl AgentPane {
         scrollback_capacity: usize,
         event_tx: UnboundedSender<AppEvent>,
     ) -> Result<Self, anyhow::Error> {
-        let _ = std::process::Command::new("tmux")
-            .args(["start-server"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "mouse", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "set-clipboard", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "allow-passthrough", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "window-size", "latest"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "aggressive-resize", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-t", session_name, "mouse", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-t", session_name, "set-clipboard", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-t", session_name, "allow-passthrough", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args([
-                "set-window-option",
-                "-t",
-                session_name,
-                "window-size",
-                "latest",
-            ])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args([
-                "set-window-option",
-                "-t",
-                session_name,
-                "aggressive-resize",
-                "on",
-            ])
-            .status();
+        run_tmux_silent(&["start-server"]);
+        run_tmux_silent(&["set-option", "-g", "mouse", "on"]);
+        run_tmux_silent(&["set-option", "-g", "set-clipboard", "on"]);
+        run_tmux_silent(&["set-option", "-g", "allow-passthrough", "on"]);
+        run_tmux_silent(&["set-option", "-g", "window-size", "latest"]);
+        run_tmux_silent(&["set-option", "-g", "aggressive-resize", "on"]);
+        run_tmux_silent(&["set-option", "-t", session_name, "mouse", "on"]);
+        run_tmux_silent(&["set-option", "-t", session_name, "set-clipboard", "on"]);
+        run_tmux_silent(&["set-option", "-t", session_name, "allow-passthrough", "on"]);
+        run_tmux_silent(&[
+            "set-window-option",
+            "-t",
+            session_name,
+            "window-size",
+            "latest",
+        ]);
+        run_tmux_silent(&[
+            "set-window-option",
+            "-t",
+            session_name,
+            "aggressive-resize",
+            "on",
+        ]);
 
         let env = HashMap::new();
         // Attach directly to the requested session without creating a temporary suffixed session
@@ -315,9 +304,7 @@ impl Pane for AgentPane {
     fn kill(&mut self) {
         self.pty.kill();
         if let Some(ref sess) = self.client_session.take() {
-            let _ = std::process::Command::new("tmux")
-                .args(["kill-session", "-t", sess])
-                .status();
+            run_tmux_silent(&["kill-session", "-t", sess]);
         }
     }
 }
@@ -325,9 +312,7 @@ impl Pane for AgentPane {
 impl Drop for AgentPane {
     fn drop(&mut self) {
         if let Some(ref sess) = self.client_session {
-            let _ = std::process::Command::new("tmux")
-                .args(["kill-session", "-t", sess])
-                .status();
+            run_tmux_silent(&["kill-session", "-t", sess]);
         }
     }
 }

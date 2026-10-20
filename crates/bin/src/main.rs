@@ -18,7 +18,8 @@ use std::time::Duration;
 use tag_agents::{get_setup_hooks, AgentPane, AgentProfile, HookServer};
 use tag_applets::{PeerChatPane, PokerPane};
 use tag_clipboard::{
-    copy_to_clipboard, wrap_bracketed_paste, ImageBridge, SnippetBank, SnippetOverlayState,
+    copy_to_clipboard, get_clipboard_text, set_internal_clipboard, wrap_bracketed_paste,
+    ImageBridge, SnippetBank, SnippetOverlayState,
 };
 use tag_core::action::{Action, Direction, SplitDirection};
 use tag_core::command::CommandRegistry;
@@ -43,7 +44,7 @@ use tag_usage::{
     render_usage_overlay, AgyProvider, ClaudeCodeProvider, CodexProvider, UsageOverlayState,
     UsageStore,
 };
-use tag_vault::{render_vault_overlay, VaultOverlayState, VaultStore};
+use tag_vault::{render_vault_overlay, VaultMode, VaultOverlayState, VaultStore};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -52,14 +53,23 @@ mod update;
 
 const TAG_SESSION_NAME: &str = "tag-session";
 
+fn run_tmux_silent(args: &[&str]) -> bool {
+    std::process::Command::new("tmux")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn is_session_running(name: &str) -> bool {
-    let status = std::process::Command::new("tmux")
-        .args(["has-session", "-t", name])
-        .output();
-    match status {
-        Ok(out) => out.status.success(),
-        Err(_) => false,
-    }
+    run_tmux_silent(&["has-session", "-t", name])
+}
+
+fn is_tmux_server_running() -> bool {
+    run_tmux_silent(&["has-session"])
 }
 
 fn attach_to_session(name: &str) -> Result<(), anyhow::Error> {
@@ -241,6 +251,59 @@ enum Commands {
         #[arg(long)]
         beta: bool,
     },
+    /// Manage encrypted secrets in the TAG vault
+    Vault {
+        #[command(subcommand)]
+        command: VaultCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum VaultCommands {
+    /// Add or update a secret in the vault
+    Set {
+        /// Secret key name (e.g. ANTHROPIC_API_KEY)
+        key: String,
+        /// Secret value (if omitted, prompts securely or reads from stdin)
+        value: Option<String>,
+        /// Master passphrase (if omitted, prompts securely or uses TAG_VAULT_PASSWORD)
+        #[arg(long)]
+        passphrase: Option<String>,
+        /// Custom vault file path (default: ~/.config/tag/vault.enc)
+        #[arg(long)]
+        vault_file: Option<PathBuf>,
+    },
+    /// List secret key names stored in the vault
+    List {
+        /// Master passphrase (if omitted, prompts securely or uses TAG_VAULT_PASSWORD)
+        #[arg(long)]
+        passphrase: Option<String>,
+        /// Custom vault file path (default: ~/.config/tag/vault.enc)
+        #[arg(long)]
+        vault_file: Option<PathBuf>,
+    },
+    /// Get a secret value from the vault
+    Get {
+        /// Secret key name
+        key: String,
+        /// Master passphrase (if omitted, prompts securely or uses TAG_VAULT_PASSWORD)
+        #[arg(long)]
+        passphrase: Option<String>,
+        /// Custom vault file path (default: ~/.config/tag/vault.enc)
+        #[arg(long)]
+        vault_file: Option<PathBuf>,
+    },
+    /// Remove a secret from the vault
+    Remove {
+        /// Secret key name
+        key: String,
+        /// Master passphrase (if omitted, prompts securely or uses TAG_VAULT_PASSWORD)
+        #[arg(long)]
+        passphrase: Option<String>,
+        /// Custom vault file path (default: ~/.config/tag/vault.enc)
+        #[arg(long)]
+        vault_file: Option<PathBuf>,
+    },
 }
 
 struct CachedGitData {
@@ -336,9 +399,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     if let Some(Commands::Kill) = cli.command {
         if is_session_running(TAG_SESSION_NAME) {
-            let _ = std::process::Command::new("tmux")
-                .args(["kill-session", "-t", TAG_SESSION_NAME])
-                .status();
+            run_tmux_silent(&["kill-session", "-t", TAG_SESSION_NAME]);
             println!("TAG background session terminated.");
         } else {
             println!("No TAG background session is currently running.");
@@ -357,9 +418,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     if let Some(Commands::Detach) = cli.command {
         if is_session_running(TAG_SESSION_NAME) {
-            let _ = std::process::Command::new("tmux")
-                .args(["detach-client", "-s", TAG_SESSION_NAME])
-                .status();
+            run_tmux_silent(&["detach-client", "-s", TAG_SESSION_NAME]);
             println!("TAG background session detached.");
         } else {
             println!("No TAG background session is currently running.");
@@ -377,6 +436,10 @@ async fn main() -> Result<(), anyhow::Error> {
             std::process::exit(1);
         }
         return Ok(());
+    }
+
+    if let Some(Commands::Vault { command }) = cli.command {
+        return handle_vault_command(command);
     }
 
     // Guard against running TAG inside an existing TAG session
@@ -539,6 +602,157 @@ fn handle_paste_image(file: Option<PathBuf>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+fn prompt_passphrase(cli_pass: Option<String>) -> Result<String, anyhow::Error> {
+    if let Some(p) = cli_pass {
+        if !p.is_empty() {
+            return Ok(p);
+        }
+    }
+    if let Ok(p) = std::env::var("TAG_VAULT_PASSWORD") {
+        if !p.is_empty() {
+            return Ok(p);
+        }
+    }
+    read_password_terminal("Enter TAG Vault master passphrase: ")
+}
+
+fn read_password_terminal(prompt: &str) -> Result<String, anyhow::Error> {
+    use std::io::{stdout, Write};
+    print!("{}", prompt);
+    stdout().flush()?;
+
+    crossterm::terminal::enable_raw_mode()?;
+    let mut input = String::new();
+    loop {
+        if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+            match key.code {
+                crossterm::event::KeyCode::Enter => break,
+                crossterm::event::KeyCode::Backspace => {
+                    input.pop();
+                }
+                crossterm::event::KeyCode::Char(c) => {
+                    input.push(c);
+                }
+                crossterm::event::KeyCode::Esc => {
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    println!();
+                    return Err(anyhow::anyhow!("Operation cancelled"));
+                }
+                _ => {}
+            }
+        }
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    println!();
+    Ok(input)
+}
+
+fn handle_vault_command(cmd: VaultCommands) -> Result<(), anyhow::Error> {
+    use std::io::IsTerminal;
+
+    let default_vault_path = dirs_or_home().join(".config").join("tag").join("vault.enc");
+
+    match cmd {
+        VaultCommands::Set {
+            key,
+            value,
+            passphrase,
+            vault_file,
+        } => {
+            let path = vault_file.unwrap_or(default_vault_path);
+            let mut vault = VaultStore::new(path.clone(), 60);
+            let pass = prompt_passphrase(passphrase)?;
+            vault.unlock(&pass)?;
+
+            let val = match value {
+                Some(v) => v,
+                None => {
+                    if !std::io::stdin().is_terminal() {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        std::io::stdin().read_to_string(&mut buf)?;
+                        buf.trim_end_matches(&['\r', '\n'][..]).to_string()
+                    } else {
+                        read_password_terminal(&format!("Enter secret value for '{}': ", key))?
+                    }
+                }
+            };
+
+            vault.set_secret(key.clone(), val);
+            vault.save_current()?;
+            println!(
+                "Secret '{}' saved and encrypted in TAG vault ({}).",
+                key,
+                path.display()
+            );
+        }
+        VaultCommands::List {
+            passphrase,
+            vault_file,
+        } => {
+            let path = vault_file.unwrap_or(default_vault_path);
+            let mut vault = VaultStore::new(path.clone(), 60);
+            let pass = prompt_passphrase(passphrase)?;
+            vault.unlock(&pass)?;
+            let keys = vault.list_keys();
+            if keys.is_empty() {
+                println!("TAG Secrets Vault is empty ({}).", path.display());
+                println!(
+                    "Run 'tag vault set <KEY>' or press Ctrl+Space e inside TAG to add secrets."
+                );
+            } else {
+                println!(
+                    "TAG Secrets Vault ({} secret{} stored in {}):",
+                    keys.len(),
+                    if keys.len() == 1 { "" } else { "s" },
+                    path.display()
+                );
+                for k in keys {
+                    println!("  • {:<28} [••••••••••••] (Auto-injected into agents)", k);
+                }
+            }
+        }
+        VaultCommands::Get {
+            key,
+            passphrase,
+            vault_file,
+        } => {
+            let path = vault_file.unwrap_or(default_vault_path);
+            let mut vault = VaultStore::new(path, 60);
+            let pass = prompt_passphrase(passphrase)?;
+            vault.unlock(&pass)?;
+            if let Some(sec) = vault.get_secret_value(&key) {
+                println!("{}", sec);
+            } else {
+                eprintln!("Error: Secret '{}' not found in vault.", key);
+                std::process::exit(1);
+            }
+        }
+        VaultCommands::Remove {
+            key,
+            passphrase,
+            vault_file,
+        } => {
+            let path = vault_file.unwrap_or(default_vault_path);
+            let mut vault = VaultStore::new(path.clone(), 60);
+            let pass = prompt_passphrase(passphrase)?;
+            vault.unlock(&pass)?;
+            if vault.delete_secret(&key) {
+                vault.save_current()?;
+                println!(
+                    "Secret '{}' removed from TAG vault ({}).",
+                    key,
+                    path.display()
+                );
+            } else {
+                eprintln!("Error: Secret '{}' not found in vault.", key);
+                std::process::exit(1);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn get_tag_socket_dir() -> PathBuf {
     let dir = if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         PathBuf::from(runtime_dir).join("tag")
@@ -692,26 +906,15 @@ async fn run_app(
         }
     });
 
-    // Ensure tmux has mouse mode and responsive window sizing globally enabled if tmux is installed (asynchronously)
+    // Ensure tmux has mouse mode and responsive window sizing globally enabled if a tmux server is running (asynchronously)
     tokio::task::spawn_blocking(|| {
-        let _ = std::process::Command::new("tmux")
-            .args(["start-server"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "mouse", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "set-clipboard", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "allow-passthrough", "on"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "window-size", "latest"])
-            .status();
-        let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-g", "aggressive-resize", "on"])
-            .status();
+        if is_tmux_server_running() {
+            run_tmux_silent(&["set-option", "-g", "mouse", "on"]);
+            run_tmux_silent(&["set-option", "-g", "set-clipboard", "on"]);
+            run_tmux_silent(&["set-option", "-g", "allow-passthrough", "on"]);
+            run_tmux_silent(&["set-option", "-g", "window-size", "latest"]);
+            run_tmux_silent(&["set-option", "-g", "aggressive-resize", "on"]);
+        }
     });
 
     // Initialize state
@@ -721,7 +924,11 @@ async fn run_app(
     let key_state_machine = KeyStateMachine::from_config(&config, &command_registry);
     let layout_mgr = LayoutManager::new();
     let usage_store = UsageStore::open_in_memory()?;
-    let snippets = SnippetBank::new();
+    let snippets_path = dirs_or_home()
+        .join(".config")
+        .join("tag")
+        .join("snippets.toml");
+    let snippets = SnippetBank::load_from_file_or_default(&snippets_path);
     let vault_path = dirs_or_home().join(".config").join("tag").join("vault.enc");
     let vault = VaultStore::new(vault_path, config.vault_idle_timeout_mins);
 
@@ -870,7 +1077,8 @@ async fn run_app(
         }
     }
 
-    // Draw initial frame immediately before scanning historical logs
+    // Ensure clean screen and draw initial frame immediately before scanning historical logs
+    let _ = terminal.clear();
     terminal.draw(|f| {
         render_frame(f, &mut state);
     })?;
@@ -1857,7 +2065,11 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                             state.snippet_state.selected_index.saturating_sub(1);
                     }
                     KeyCode::Down => {
-                        state.snippet_state.selected_index += 1;
+                        if !state.snippets.snippets.is_empty() {
+                            state.snippet_state.selected_index =
+                                (state.snippet_state.selected_index + 1)
+                                    .min(state.snippets.snippets.len() - 1);
+                        }
                     }
                     KeyCode::Enter => {
                         if let Some(snip) = state
@@ -1883,31 +2095,149 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             }
 
             if state.vault_state.is_open {
-                match key.code {
-                    KeyCode::Esc => {
-                        state.vault_state.clear_input();
-                        state.vault_state.is_open = false;
-                    }
-                    KeyCode::Backspace => {
-                        state.vault_state.input_buffer.pop();
-                    }
-                    KeyCode::Char(c) => {
-                        state.vault_state.input_buffer.push(c);
-                    }
-                    KeyCode::Enter => {
-                        let res = state.vault.unlock(&state.vault_state.input_buffer);
-                        state.vault_state.clear_input();
-                        match res {
-                            Ok(_) => {
-                                state.vault_state.status_message =
-                                    Some("Unlocked successfully".into());
-                            }
-                            Err(e) => {
-                                state.vault_state.status_message = Some(format!("Error: {}", e));
+                // If not unlocked, handle passphrase input
+                if !state.vault.is_unlocked() {
+                    match key.code {
+                        KeyCode::Esc => {
+                            state.vault_state.clear_input();
+                            state.vault_state.is_open = false;
+                        }
+                        KeyCode::Backspace => {
+                            state.vault_state.input_buffer.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            state.vault_state.input_buffer.push(c);
+                        }
+                        KeyCode::Enter => {
+                            let res = state.vault.unlock(&state.vault_state.input_buffer);
+                            state.vault_state.clear_input();
+                            match res {
+                                Ok(_) => {
+                                    state.vault_state.mode = VaultMode::Viewing;
+                                    state.vault_state.status_message =
+                                        Some("Unlocked successfully".into());
+                                }
+                                Err(e) => {
+                                    state.vault_state.status_message =
+                                        Some(format!("Error: {}", e));
+                                }
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
+                    return false;
+                }
+
+                // If unlocked, handle based on vault mode
+                match state.vault_state.mode {
+                    VaultMode::Locked => {
+                        state.vault_state.mode = VaultMode::Viewing;
+                    }
+                    VaultMode::Viewing => {
+                        let keys = state.vault.list_keys();
+                        match key.code {
+                            KeyCode::Esc => {
+                                state.vault_state.clear_input();
+                                state.vault_state.is_open = false;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
+                                state.vault_state.selected_index =
+                                    state.vault_state.selected_index.saturating_sub(1);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+                                if !keys.is_empty() {
+                                    state.vault_state.selected_index =
+                                        (state.vault_state.selected_index + 1).min(keys.len() - 1);
+                                }
+                            }
+                            KeyCode::Char('a') | KeyCode::Char('A') if key.modifiers.is_empty() => {
+                                state.vault_state.mode = VaultMode::AddingKey;
+                                state.vault_state.clear_input();
+                                state.vault_state.pending_key.clear();
+                                state.vault_state.status_message = None;
+                            }
+                            KeyCode::Char('d') | KeyCode::Char('x') | KeyCode::Delete
+                                if key.modifiers.is_empty() || key.code == KeyCode::Delete =>
+                            {
+                                if let Some(key_to_delete) =
+                                    keys.get(state.vault_state.selected_index)
+                                {
+                                    let key_name = key_to_delete.clone();
+                                    state.vault.delete_secret(&key_name);
+                                    let _ = state.vault.save_current();
+                                    state.vault_state.status_message =
+                                        Some(format!("Deleted secret '{}'", key_name));
+                                    let remaining_keys = state.vault.list_keys();
+                                    if state.vault_state.selected_index >= remaining_keys.len() {
+                                        state.vault_state.selected_index =
+                                            remaining_keys.len().saturating_sub(1);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    VaultMode::AddingKey => match key.code {
+                        KeyCode::Esc => {
+                            state.vault_state.clear_input();
+                            state.vault_state.pending_key.clear();
+                            state.vault_state.mode = VaultMode::Viewing;
+                            state.vault_state.status_message = None;
+                        }
+                        KeyCode::Backspace => {
+                            state.vault_state.input_buffer.pop();
+                        }
+                        KeyCode::Enter => {
+                            let key_name = state.vault_state.input_buffer.trim().to_string();
+                            if !key_name.is_empty() {
+                                state.vault_state.pending_key = key_name;
+                                state.vault_state.clear_input();
+                                state.vault_state.mode = VaultMode::AddingValue;
+                                state.vault_state.status_message = None;
+                            } else {
+                                state.vault_state.status_message =
+                                    Some("Key name cannot be empty".into());
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            state.vault_state.input_buffer.push(c);
+                        }
+                        _ => {}
+                    },
+                    VaultMode::AddingValue => match key.code {
+                        KeyCode::Esc => {
+                            state.vault_state.clear_input();
+                            state.vault_state.pending_key.clear();
+                            state.vault_state.mode = VaultMode::Viewing;
+                            state.vault_state.status_message = None;
+                        }
+                        KeyCode::Backspace => {
+                            state.vault_state.input_buffer.pop();
+                        }
+                        KeyCode::Enter => {
+                            let secret_val = state.vault_state.input_buffer.clone();
+                            let key_name = state.vault_state.pending_key.clone();
+                            state.vault.set_secret(key_name.clone(), secret_val);
+                            let save_res = state.vault.save_current();
+                            state.vault_state.clear_input();
+                            state.vault_state.pending_key.clear();
+                            state.vault_state.mode = VaultMode::Viewing;
+                            match save_res {
+                                Ok(_) => {
+                                    state.vault_state.status_message =
+                                        Some(format!("Secret '{}' saved and encrypted", key_name));
+                                }
+                                Err(e) => {
+                                    state.vault_state.status_message =
+                                        Some(format!("Failed to save secret: {}", e));
+                                }
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            state.vault_state.input_buffer.push(c);
+                        }
+                        _ => {}
+                    },
                 }
                 return false;
             }
@@ -2131,9 +2461,24 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                 return false;
             }
 
+            let was_leader = state.key_state_machine.state() == tag_keys::KeyState::LeaderPending;
             // Process through key state machine
             if let Some(action) = state.key_state_machine.process_key(key) {
                 return execute_action(state, action);
+            }
+            if was_leader {
+                // Key was entered while Leader was pending; do not forward unmapped follower to child pane!
+                state.is_dirty = true;
+                return false;
+            }
+
+            // Direct Ctrl+Shift+V or Shift+Insert for paste
+            if (key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.modifiers.contains(KeyModifiers::SHIFT)
+                && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')))
+                || (key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Insert)
+            {
+                return execute_action(state, Action::PasteFromClipboard);
             }
 
             // Check Shift+PageUp / Shift+PageDown for viewport scrollback
@@ -2535,19 +2880,38 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     }
                 }
                 MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
-                    if let Ok(mut cb) = arboard::Clipboard::new() {
-                        if let Ok(text) = cb.get_text() {
-                            if let Some(focused) = state.layout_mgr.active_workspace().focused_pane
-                            {
-                                if let Some(pane) = state.panes.get_mut(&focused) {
-                                    let wrapped = wrap_bracketed_paste(&text);
-                                    pane.send_input(&wrapped);
-                                }
-                            }
-                        }
-                    }
+                    return execute_action(state, Action::PasteFromClipboard);
                 }
                 _ => {}
+            }
+            false
+        }
+        AppEvent::TerminalInput(CrossEvent::Paste(text)) => {
+            set_internal_clipboard(&text);
+            if state.palette.is_open {
+                state.palette.query.push_str(&text);
+                state.palette.selected_index = 0;
+                state.is_dirty = true;
+            } else if state.tab_tray.is_open {
+                state.tab_tray.search_query.push_str(&text);
+                state.is_dirty = true;
+            } else if let Some(ref mut prompt) = state.rename_prompt {
+                prompt.input.push_str(&text);
+                state.is_dirty = true;
+            } else if state.vault_state.is_open {
+                state.vault_state.input_buffer.push_str(&text);
+                state.is_dirty = true;
+            } else if let Some(ref mut prompt) = state.git_state.prompt {
+                prompt.input.push_str(&text);
+                state.is_dirty = true;
+            } else if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
+                if let Some(pane) = state.panes.get_mut(&focused) {
+                    pane.clear_selection();
+                    let wrapped = wrap_bracketed_paste(&text);
+                    pane.send_input(&wrapped);
+                    pane.scroll_to_bottom();
+                    state.is_dirty = true;
+                }
             }
             false
         }
@@ -2725,9 +3089,30 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleSnippetOverlay => {
             state.snippet_state.is_open = !state.snippet_state.is_open;
+            if state.snippet_state.is_open {
+                let snippets_path = dirs_or_home()
+                    .join(".config")
+                    .join("tag")
+                    .join("snippets.toml");
+                state.snippets = SnippetBank::load_from_file_or_default(&snippets_path);
+                if state.snippet_state.selected_index >= state.snippets.snippets.len() {
+                    state.snippet_state.selected_index =
+                        state.snippets.snippets.len().saturating_sub(1);
+                }
+            }
         }
         Action::ToggleVaultOverlay => {
             state.vault_state.is_open = !state.vault_state.is_open;
+            if state.vault_state.is_open {
+                if state.vault.is_unlocked() {
+                    state.vault_state.mode = VaultMode::Viewing;
+                } else {
+                    state.vault_state.mode = VaultMode::Locked;
+                }
+                state.vault_state.clear_input();
+                state.vault_state.pending_key.clear();
+                state.vault_state.status_message = None;
+            }
         }
         Action::ToggleQuickSwitcher => {
             state.palette.is_open = true;
@@ -3111,15 +3496,41 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             }
         }
         Action::PasteFromClipboard => {
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                if let Ok(text) = cb.get_text() {
-                    if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
-                        if let Some(pane) = state.panes.get_mut(&focused) {
-                            let wrapped = wrap_bracketed_paste(&text);
-                            pane.send_input(&wrapped);
-                        }
+            if let Some(text) = get_clipboard_text() {
+                if state.palette.is_open {
+                    state.palette.query.push_str(&text);
+                    state.palette.selected_index = 0;
+                    state.is_dirty = true;
+                } else if state.tab_tray.is_open {
+                    state.tab_tray.search_query.push_str(&text);
+                    state.is_dirty = true;
+                } else if let Some(ref mut prompt) = state.rename_prompt {
+                    prompt.input.push_str(&text);
+                    state.is_dirty = true;
+                } else if state.vault_state.is_open {
+                    state.vault_state.input_buffer.push_str(&text);
+                    state.is_dirty = true;
+                } else if let Some(ref mut prompt) = state.git_state.prompt {
+                    prompt.input.push_str(&text);
+                    state.is_dirty = true;
+                } else if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
+                    if let Some(pane) = state.panes.get_mut(&focused) {
+                        pane.clear_selection();
+                        let wrapped = wrap_bracketed_paste(&text);
+                        pane.send_input(&wrapped);
+                        pane.scroll_to_bottom();
+                        state.is_dirty = true;
                     }
                 }
+            } else {
+                state.toasts.push(Toast {
+                    title: "Clipboard Empty".into(),
+                    message: "No text found in system or TAG clipboard.".into(),
+                    level: ToastLevel::Warning,
+                    created_at: chrono::Utc::now(),
+                    duration_secs: 3,
+                });
+                state.is_dirty = true;
             }
         }
         Action::SpawnApplet { name } => {
@@ -3170,9 +3581,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::Detach => {
             save_session_to_disk(state);
-            let _ = std::process::Command::new("tmux")
-                .args(["detach-client"])
-                .status();
+            run_tmux_silent(&["detach-client"]);
             return true;
         }
         Action::ToggleBackgroundMode => {

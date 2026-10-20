@@ -34,14 +34,15 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | `Ctrl+Shift+C` | Copy Selection | Copies highlighted selection to clipboard over SSH/Termius and local desktop |
 | `Ctrl+C (with selection)` | Smart Copy | Copies selection when active; acts as standard SIGINT cancel when no selection |
 | `Leader+y` / `Leader+c` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
-| `Ctrl+Shift+V` | Paste Clipboard | Paste text from system clipboard into the focused pane |
+| `Leader+v` / `Leader+p` | Paste Clipboard | Leader shortcut to paste text from clipboard into focused pane |
+| `Ctrl+Shift+V` / `Shift+Ins` | Paste Clipboard | Direct shortcut to paste text from system clipboard into the focused pane |
 | `Shift + Mouse Drag` | Terminal Selection | Bypasses in-app mouse capture for terminal emulator's native selection |
 
 ## Discoverability & Tools
 
 | Shortcut | Action | Description |
 |---|---|---|
-| `Leader+p` | Command Palette | Fuzzy search and run all commands |
+| `Leader+Space` / `Leader+:` | Command Palette | Fuzzy search and run all commands |
 | `Leader+?` / `F1` | Cheat-Sheet | Context-aware shortcut help |
 | `Pause after Leader` | Which-Key Popup | Live prompt of available chords |
 | `Leader+U` | Update TAG | Check for updates and run self-upgrade wizard |
@@ -51,6 +52,6 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | `Leader+g` | Git Worktrees | Worktree lifecycle, status, and diff viewer |
 | `Leader+s` | Snippet Bank | Templated macros with placeholder filling |
 | `Leader+i` | Image Bridge | Paste clipboard image and insert worktree path |
-| `Leader+v` | Secrets Vault | Encrypted storage and agent env injection |
+| `Leader+e` | Secrets Vault | Encrypted storage, interactive secret management ([a] Add, [d] Delete), and agent env injection |
 | `Leader+n` | Do Not Disturb | Mute desktop notifications |
 | `Leader+q` | Quit | Clean shutdown and terminal state restore |

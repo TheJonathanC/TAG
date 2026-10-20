@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::Crypto;
 
@@ -22,6 +22,7 @@ pub struct VaultStore {
     idle_timeout_mins: u64,
     secrets: HashMap<String, SecretString>,
     salt: [u8; 16],
+    derived_key: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl VaultStore {
@@ -33,11 +34,12 @@ impl VaultStore {
             idle_timeout_mins,
             secrets: HashMap::new(),
             salt: [0u8; 16],
+            derived_key: None,
         }
     }
 
     pub fn is_unlocked(&self) -> bool {
-        if !self.is_unlocked {
+        if !self.is_unlocked || self.derived_key.is_none() {
             return false;
         }
         let elapsed = Utc::now().signed_duration_since(self.last_accessed);
@@ -46,6 +48,7 @@ impl VaultStore {
 
     pub fn lock(&mut self) {
         self.secrets.clear();
+        self.derived_key = None;
         self.is_unlocked = false;
     }
 
@@ -58,7 +61,9 @@ impl VaultStore {
             self.secrets.clear();
             self.is_unlocked = true;
             self.last_accessed = Utc::now();
-            self.save(passphrase)?;
+            let key = Crypto::derive_key(passphrase.as_bytes(), &salt)?;
+            self.derived_key = Some(Zeroizing::new(key));
+            self.save_current()?;
             return Ok(());
         }
 
@@ -71,9 +76,8 @@ impl VaultStore {
         let mut salt = [0u8; 16];
         salt.copy_from_slice(salt_slice);
 
-        let mut key = Crypto::derive_key(passphrase.as_bytes(), &salt)?;
+        let key = Crypto::derive_key(passphrase.as_bytes(), &salt)?;
         let decrypt_res = Crypto::decrypt(&key, ciphertext);
-        key.zeroize();
         let mut decrypted_bytes = decrypt_res?;
 
         let parse_res: Result<HashMap<String, String>, _> =
@@ -88,6 +92,7 @@ impl VaultStore {
         }
 
         self.salt = salt;
+        self.derived_key = Some(Zeroizing::new(key));
         self.is_unlocked = true;
         self.last_accessed = Utc::now();
         Ok(())
@@ -100,13 +105,25 @@ impl VaultStore {
         self.secrets.insert(key, secret);
     }
 
+    pub fn delete_secret(&mut self, key: &str) -> bool {
+        self.last_accessed = Utc::now();
+        self.secrets.remove(key).is_some()
+    }
+
     pub fn get_secret(&mut self, key: &str) -> Option<&SecretString> {
         self.last_accessed = Utc::now();
         self.secrets.get(key)
     }
 
+    pub fn get_secret_value(&mut self, key: &str) -> Option<String> {
+        self.last_accessed = Utc::now();
+        self.secrets.get(key).map(|s| s.expose_secret().to_string())
+    }
+
     pub fn list_keys(&self) -> Vec<String> {
-        self.secrets.keys().cloned().collect()
+        let mut keys: Vec<String> = self.secrets.keys().cloned().collect();
+        keys.sort();
+        keys
     }
 
     pub fn get_env_set(&mut self) -> HashMap<String, String> {
@@ -118,7 +135,12 @@ impl VaultStore {
         map
     }
 
-    pub fn save(&self, passphrase: &str) -> Result<(), anyhow::Error> {
+    pub fn save_current(&self) -> Result<(), anyhow::Error> {
+        let key = self
+            .derived_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cannot save: vault is locked"))?;
+
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
             #[cfg(unix)]
@@ -134,16 +156,7 @@ impl VaultStore {
         }
 
         let mut json_bytes = serde_json::to_vec(&raw_map)?;
-        let key_res = Crypto::derive_key(passphrase.as_bytes(), &self.salt);
-        let mut key = match key_res {
-            Ok(k) => k,
-            Err(e) => {
-                json_bytes.zeroize();
-                return Err(e);
-            }
-        };
-        let encrypt_res = Crypto::encrypt(&key, &json_bytes);
-        key.zeroize();
+        let encrypt_res = Crypto::encrypt(key, &json_bytes);
         json_bytes.zeroize();
         let ciphertext = encrypt_res?;
 
@@ -172,5 +185,67 @@ impl VaultStore {
         }
         fs::rename(&tmp_path, &self.path)?;
         Ok(())
+    }
+
+    pub fn save(&mut self, passphrase: &str) -> Result<(), anyhow::Error> {
+        let key = Crypto::derive_key(passphrase.as_bytes(), &self.salt)?;
+        self.derived_key = Some(Zeroizing::new(key));
+        self.save_current()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vault_lifecycle() {
+        let dir = std::env::temp_dir().join(format!("tag_test_vault_{}", rand::random::<u64>()));
+        let vault_file = dir.join("vault.enc");
+
+        let mut vault = VaultStore::new(vault_file.clone(), 30);
+        assert!(!vault.is_unlocked());
+
+        // Initializing new vault with master passphrase
+        vault.unlock("master-password-123").unwrap();
+        assert!(vault.is_unlocked());
+        assert_eq!(vault.list_keys().len(), 0);
+
+        // Add secrets
+        vault.set_secret("OPENAI_KEY".into(), "sk-12345".into());
+        vault.set_secret("ANTHROPIC_KEY".into(), "ant-secret".into());
+        assert_eq!(vault.list_keys(), vec!["ANTHROPIC_KEY", "OPENAI_KEY"]);
+
+        // Save encrypted state
+        vault.save_current().unwrap();
+        assert!(vault_file.exists());
+
+        // Lock vault
+        vault.lock();
+        assert!(!vault.is_unlocked());
+        assert_eq!(vault.list_keys().len(), 0);
+
+        // Wrong passphrase fails
+        assert!(vault.unlock("wrong-password").is_err());
+        assert!(!vault.is_unlocked());
+
+        // Correct passphrase restores secrets
+        vault.unlock("master-password-123").unwrap();
+        assert!(vault.is_unlocked());
+        assert_eq!(vault.list_keys(), vec!["ANTHROPIC_KEY", "OPENAI_KEY"]);
+        assert_eq!(
+            vault.get_secret("OPENAI_KEY").unwrap().expose_secret(),
+            "sk-12345"
+        );
+
+        // Delete secret and verify
+        assert!(vault.delete_secret("OPENAI_KEY"));
+        vault.save_current().unwrap();
+
+        let mut vault2 = VaultStore::new(vault_file.clone(), 30);
+        vault2.unlock("master-password-123").unwrap();
+        assert_eq!(vault2.list_keys(), vec!["ANTHROPIC_KEY"]);
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

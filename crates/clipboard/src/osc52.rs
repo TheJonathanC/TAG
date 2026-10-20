@@ -29,12 +29,19 @@ pub fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+static INTERNAL_CLIPBOARD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 /// Copies text to both the local desktop clipboard (via arboard)
-/// and the client terminal clipboard (via OSC 52 escape sequences).
+/// and the client terminal clipboard (via OSC 52 escape sequences),
+/// while caching in internal clipboard for fast fallback retrieval.
 ///
 /// This ensures clipboard operations succeed both on desktop sessions and
 /// remote headless SSH sessions (Termius, iTerm2, Alacritty, WezTerm, etc.).
 pub fn copy_to_clipboard(text: &str) {
+    if let Ok(mut lock) = INTERNAL_CLIPBOARD.lock() {
+        *lock = Some(text.to_string());
+    }
+
     // 1. Try local desktop clipboard (X11 / Wayland / macOS / Windows)
     if let Ok(mut cb) = arboard::Clipboard::new() {
         let _ = cb.set_text(text.to_string());
@@ -42,6 +49,115 @@ pub fn copy_to_clipboard(text: &str) {
 
     // 2. Emit OSC 52 sequence for remote SSH terminal emulators (Termius, etc.)
     emit_osc52(text);
+}
+
+pub fn set_internal_clipboard(text: &str) {
+    if let Ok(mut lock) = INTERNAL_CLIPBOARD.lock() {
+        *lock = Some(text.to_string());
+    }
+}
+
+pub fn get_internal_clipboard() -> Option<String> {
+    INTERNAL_CLIPBOARD.lock().ok().and_then(|lock| lock.clone())
+}
+
+/// Retrieves text from system clipboard with comprehensive multi-platform fallbacks:
+/// 1. arboard (Wayland / X11 / macOS / Windows desktop)
+/// 2. wl-paste (Wayland CLI)
+/// 3. xclip (X11 CLI)
+/// 4. xsel (X11 CLI)
+/// 5. pbpaste (macOS CLI)
+/// 6. powershell.exe Get-Clipboard (WSL / Windows CLI)
+/// 7. Internal clipboard (last copied text within TAG)
+pub fn get_clipboard_text() -> Option<String> {
+    // 1. Try local desktop clipboard (via arboard)
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        if let Ok(text) = cb.get_text() {
+            if !text.is_empty() {
+                set_internal_clipboard(&text);
+                return Some(text);
+            }
+        }
+    }
+
+    // 2. Wayland fallback: wl-paste
+    if let Ok(output) = std::process::Command::new("wl-paste")
+        .args(["--no-newline"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if !text.is_empty() {
+                set_internal_clipboard(&text);
+                return Some(text);
+            }
+        }
+    }
+
+    // 3. X11 fallback: xclip
+    if let Ok(output) = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-o"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if !text.is_empty() {
+                set_internal_clipboard(&text);
+                return Some(text);
+            }
+        }
+    }
+
+    // 4. X11 fallback: xsel
+    if let Ok(output) = std::process::Command::new("xsel")
+        .args(["--clipboard", "--output"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if !text.is_empty() {
+                set_internal_clipboard(&text);
+                return Some(text);
+            }
+        }
+    }
+
+    // 5. macOS fallback: pbpaste
+    if let Ok(output) = std::process::Command::new("pbpaste")
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if !text.is_empty() {
+                set_internal_clipboard(&text);
+                return Some(text);
+            }
+        }
+    }
+
+    // 6. Windows / WSL fallback: powershell.exe Get-Clipboard
+    if let Ok(output) = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", "Get-Clipboard"])
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_string();
+            if !text.is_empty() {
+                set_internal_clipboard(&text);
+                return Some(text);
+            }
+        }
+    }
+
+    // 7. Internal clipboard fallback (last text copied inside TAG)
+    get_internal_clipboard()
 }
 
 /// Emits an OSC 52 escape sequence for clipboard synchronization.
@@ -84,5 +200,14 @@ mod tests {
         assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64_encode(b"Hello, World!"), "SGVsbG8sIFdvcmxkIQ==");
+    }
+
+    #[test]
+    fn test_internal_clipboard_fallback() {
+        set_internal_clipboard("test_paste_content");
+        assert_eq!(
+            get_internal_clipboard(),
+            Some("test_paste_content".to_string())
+        );
     }
 }
