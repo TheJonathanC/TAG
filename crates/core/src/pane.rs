@@ -30,6 +30,7 @@ pub enum PaneKind {
     Agent,
     Tmux,
     Applet,
+    Donut,
 }
 
 impl PaneKind {
@@ -39,6 +40,7 @@ impl PaneKind {
             PaneKind::Agent => "[agent]",
             PaneKind::Tmux => "[tmux]",
             PaneKind::Applet => "[app]",
+            PaneKind::Donut => "[donut]",
         }
     }
 }

@@ -167,6 +167,11 @@ fn refresh_tmux_commands(registry: &mut CommandRegistry) {
                             session, agent
                         ),
                     )
+                } else if tag_pty::detect_donut_in_tmux(session) {
+                    (
+                        format!("Attach Tmux: {} (donut)", session),
+                        format!("Attach to tmux session '{}' running donut", session),
+                    )
                 } else {
                     let cmd = parts.get(1).map(|c| c.trim()).unwrap_or("");
                     let is_agent = tag_pty::is_known_agent(cmd);
@@ -1045,7 +1050,7 @@ async fn run_app(
                             target_session.clone(),
                         ];
                         title = format!("tmux: {}", target_session);
-                        if kind != PaneKind::Agent {
+                        if kind != PaneKind::Agent && kind != PaneKind::Donut {
                             kind = PaneKind::Tmux;
                         }
                     }
@@ -3169,17 +3174,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 (80, 24)
             };
 
-            let split_cwd = state
-                .layout_mgr
-                .active_workspace()
-                .focused_pane
-                .and_then(|pid| state.panes.get(&pid))
-                .and_then(|p| {
-                    let (_, _, proc_cwd) = p.running_process();
-                    proc_cwd.or_else(|| p.cwd())
-                })
-                .or_else(|| state.layout_mgr.active_workspace().worktree_binding.clone())
-                .or_else(|| std::env::current_dir().ok());
+            let split_cwd = Some(dirs_or_home());
 
             if let Ok(new_pane) = PtyPane::spawn(
                 new_id,
@@ -3234,17 +3229,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             } else {
                 (80, 24)
             };
-            let ws_cwd = state
-                .layout_mgr
-                .active_workspace()
-                .focused_pane
-                .and_then(|pid| state.panes.get(&pid))
-                .and_then(|p| {
-                    let (_, _, proc_cwd) = p.running_process();
-                    proc_cwd.or_else(|| p.cwd())
-                })
-                .or_else(|| state.layout_mgr.active_workspace().worktree_binding.clone())
-                .or_else(|| std::env::current_dir().ok());
+            let ws_cwd = Some(dirs_or_home());
 
             if let Ok(new_pane) = PtyPane::spawn(
                 new_pid,
@@ -3671,6 +3656,8 @@ fn save_session_to_disk(state: &AppState) {
                 ],
                 if pane.kind() == PaneKind::Agent {
                     PaneKind::Agent
+                } else if pane.kind() == PaneKind::Donut {
+                    PaneKind::Donut
                 } else {
                     PaneKind::Tmux
                 },

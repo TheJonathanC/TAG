@@ -52,6 +52,7 @@ pub fn render_tab_tray(
                 let query = state.search_query.to_lowercase();
                 item.title.to_lowercase().contains(&query)
                     || item.workspace_name.to_lowercase().contains(&query)
+                    || item.icon.to_lowercase().contains(&query)
                     || item
                         .branch
                         .as_deref()

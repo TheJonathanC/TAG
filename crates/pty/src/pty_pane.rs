@@ -53,6 +53,7 @@ pub struct PtyPane {
     is_zoomed: bool,
     cached_process_kind: Mutex<Option<(PaneKind, std::time::Instant)>>,
     cached_tmux_agent: Mutex<Option<(String, Option<String>, std::time::Instant)>>,
+    cached_tmux_donut: Mutex<Option<(String, bool, std::time::Instant)>>,
     cached_fg_proc: Mutex<ForegroundProcCache>,
 }
 
@@ -188,6 +189,7 @@ impl PtyPane {
             is_zoomed: false,
             cached_process_kind: Mutex::new(None),
             cached_tmux_agent: Mutex::new(None),
+            cached_tmux_donut: Mutex::new(None),
             cached_fg_proc: Mutex::new(None),
         })
     }
@@ -324,8 +326,26 @@ impl PtyPane {
         }
     }
 
+    pub fn cached_detect_tmux_donut(&self, session: &str) -> bool {
+        if let Ok(mut cache) = self.cached_tmux_donut.lock() {
+            if let Some((ref sess, donut, ts)) = *cache {
+                if sess == session && ts.elapsed() < std::time::Duration::from_millis(1500) {
+                    return donut;
+                }
+            }
+            let donut = detect_donut_in_tmux(session);
+            *cache = Some((session.to_string(), donut, std::time::Instant::now()));
+            donut
+        } else {
+            detect_donut_in_tmux(session)
+        }
+    }
+
     fn compute_kind(&self) -> PaneKind {
         if let Some(session) = self.tmux_session_name() {
+            if self.cached_detect_tmux_donut(&session) {
+                return PaneKind::Donut;
+            }
             if self.cached_detect_tmux_agent(&session).is_some() {
                 return PaneKind::Agent;
             }
@@ -334,18 +354,23 @@ impl PtyPane {
 
         #[cfg(target_os = "linux")]
         if let Some(pid) = self.child_pid {
-            if let Some((cmd, _args, _cwd)) = get_foreground_process(pid) {
+            if let Some((cmd, args, _cwd)) = get_foreground_process(pid) {
                 let cmd_name = std::path::Path::new(&cmd)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(&cmd);
                 if cmd_name == "tmux" {
                     if let Some(session) = self.tmux_session_name() {
+                        if self.cached_detect_tmux_donut(&session) {
+                            return PaneKind::Donut;
+                        }
                         if self.cached_detect_tmux_agent(&session).is_some() {
                             return PaneKind::Agent;
                         }
                     }
                     return PaneKind::Tmux;
+                } else if is_donut_process(cmd_name, &args) {
+                    return PaneKind::Donut;
                 } else if is_known_agent(cmd_name) {
                     return PaneKind::Agent;
                 }
@@ -353,9 +378,17 @@ impl PtyPane {
         }
         if self.kind == PaneKind::Tmux {
             if let Some(session) = self.tmux_session_name() {
+                if self.cached_detect_tmux_donut(&session) {
+                    return PaneKind::Donut;
+                }
                 if self.cached_detect_tmux_agent(&session).is_some() {
                     return PaneKind::Agent;
                 }
+            }
+        }
+        if let Some(ref cmd) = self.command {
+            if is_donut_process(cmd, &self.args) {
+                return PaneKind::Donut;
             }
         }
         self.kind
@@ -369,6 +402,9 @@ impl Pane for PtyPane {
 
     fn title(&self) -> String {
         if let Some(session) = self.tmux_session_name() {
+            if self.cached_detect_tmux_donut(&session) {
+                return format!("tmux: {} (donut)", session);
+            }
             if let Some(agent) = self.cached_detect_tmux_agent(&session) {
                 return format!("tmux: {} ({})", session, agent);
             }
@@ -945,6 +981,122 @@ pub fn detect_agent_in_tmux(session_name: &str) -> Option<String> {
     detected
 }
 
+type TmuxDonutCache = Mutex<HashMap<String, (bool, std::time::Instant)>>;
+
+pub fn detect_donut_in_tmux(session_name: &str) -> bool {
+    static TMUX_DONUT_CACHE: std::sync::LazyLock<TmuxDonutCache> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    if let Ok(cache) = TMUX_DONUT_CACHE.lock() {
+        if let Some(&(detected, ts)) = cache.get(session_name) {
+            if ts.elapsed() < std::time::Duration::from_millis(1500) {
+                return detected;
+            }
+        }
+    }
+
+    let detected = scan_tmux_session_for_donut(session_name);
+
+    if let Ok(mut cache) = TMUX_DONUT_CACHE.lock() {
+        cache.insert(
+            session_name.to_string(),
+            (detected, std::time::Instant::now()),
+        );
+    }
+
+    detected
+}
+
+fn scan_tmux_session_for_donut(session_name: &str) -> bool {
+    let output = match std::process::Command::new("tmux")
+        .args([
+            "list-panes",
+            "-s",
+            "-t",
+            session_name,
+            "-F",
+            "#{pane_pid}\t#{pane_current_command}\t#{pane_title}",
+        ])
+        .output()
+    {
+        Ok(out) => out,
+        Err(_) => return false,
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        let pane_pid: Option<u32> = parts.first().and_then(|p| p.trim().parse().ok());
+        let current_cmd = parts.get(1).map(|c| c.trim()).unwrap_or("");
+        let pane_title = parts.get(2).map(|t| t.trim()).unwrap_or("");
+
+        // 1. Direct check of pane_current_command
+        if is_donut_process(current_cmd, &[]) {
+            return true;
+        }
+
+        // 2. Check process tree under pane_pid
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = pane_pid {
+            if inspect_proc_tree_for_donut(pid) {
+                return true;
+            }
+        }
+
+        // 3. Check pane title
+        if pane_title.to_lowercase().contains("donut") {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_proc_tree_for_donut(root_pid: u32) -> bool {
+    let mut pids_to_check = vec![root_pid];
+    let mut visited = HashSet::new();
+
+    while let Some(current_pid) = pids_to_check.pop() {
+        if !visited.insert(current_pid) {
+            continue;
+        }
+
+        // Check cmdline of current_pid
+        if let Ok(cmdline_bytes) = std::fs::read(format!("/proc/{}/cmdline", current_pid)) {
+            let parts: Vec<String> = cmdline_bytes
+                .split(|&b| b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).to_string())
+                .collect();
+
+            if !parts.is_empty() && is_donut_process(&parts[0], &parts[1..]) {
+                return true;
+            }
+        }
+
+        // Add children of current_pid
+        let children_path = format!("/proc/{}/task/{}/children", current_pid, current_pid);
+        if let Ok(children_str) = std::fs::read_to_string(&children_path) {
+            for child_str in children_str.split_whitespace() {
+                if let Ok(child_pid) = child_str.parse::<u32>() {
+                    pids_to_check.push(child_pid);
+                }
+            }
+        }
+    }
+
+    false
+}
+
 fn scan_tmux_session_for_agent(session_name: &str) -> Option<String> {
     let output = std::process::Command::new("tmux")
         .args([
@@ -1123,6 +1275,32 @@ pub fn is_known_agent(cmd: &str) -> bool {
     )
 }
 
+pub fn is_donut_process(cmd: &str, args: &[String]) -> bool {
+    let base = std::path::Path::new(cmd)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(cmd)
+        .to_lowercase();
+    if base == "donut" || base.starts_with("donut-") || base.starts_with("donut.") {
+        return true;
+    }
+    for arg in args {
+        let trimmed = arg.trim();
+        if trimmed.starts_with('-') && trimmed != "-donut" {
+            continue;
+        }
+        let arg_base = std::path::Path::new(trimmed)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(trimmed)
+            .to_lowercase();
+        if arg_base == "donut" || arg_base.starts_with("donut.") || arg_base.starts_with("donut-") {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,6 +1316,29 @@ mod tests {
         assert!(!is_known_agent("zsh"));
         assert!(!is_known_agent("tmux"));
         assert!(!is_known_agent("vim"));
+    }
+
+    #[test]
+    fn test_is_donut_process() {
+        assert!(is_donut_process("donut", &[]));
+        assert!(is_donut_process("/home/jon/.local/bin/donut", &[]));
+        assert!(is_donut_process("/home/jon/.cargo/bin/donut", &[]));
+        assert!(is_donut_process("python3", &["donut.py".into()]));
+        assert!(is_donut_process("python", &["/path/to/donut.py".into()]));
+        assert!(is_donut_process(
+            "cargo",
+            &["run".into(), "--bin".into(), "donut".into()]
+        ));
+        assert!(!is_donut_process("bash", &[]));
+        assert!(!is_donut_process("agy", &[]));
+        assert!(!is_donut_process("vim", &["document.txt".into()]));
+    }
+
+    #[test]
+    fn test_pane_kind_donut_icon() {
+        assert_eq!(PaneKind::Donut.icon(), "[donut]");
+        assert_eq!(PaneKind::Shell.icon(), "[sh]");
+        assert_eq!(PaneKind::Agent.icon(), "[agent]");
     }
 
     #[test]
