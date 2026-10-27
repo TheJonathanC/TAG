@@ -2,6 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ThemeConfig {
     pub name: String,
     pub border_focused: String,
@@ -14,7 +15,6 @@ pub struct ThemeConfig {
     pub success: String,
     pub info: String,
     pub nerd_fonts: bool,
-    #[serde(default)]
     pub selection: Option<String>,
 }
 

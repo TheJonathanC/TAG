@@ -34,6 +34,10 @@ struct Cli {
     /// Worktree path override
     #[arg(short, long)]
     worktree: Option<PathBuf>,
+
+    /// Read the hook's JSON payload from stdin (e.g. Claude Code hooks) for the message
+    #[arg(long)]
+    stdin: bool,
 }
 
 fn main() {
@@ -87,9 +91,19 @@ pub fn run_notify() {
 
     let pane_id = cli.pane_id.map(PaneId).or(env_pane_id);
 
+    let stdin_payload = if cli.stdin && cli.message.is_empty() {
+        use std::io::Read;
+        let mut buf = String::new();
+        let _ = std::io::stdin().take(64 * 1024).read_to_string(&mut buf);
+        Some(buf)
+    } else {
+        None
+    };
+
     let message = if cli.message.is_empty() {
         cli.payload
             .as_deref()
+            .or(stdin_payload.as_deref())
             .and_then(message_from_payload)
             .unwrap_or_default()
     } else {

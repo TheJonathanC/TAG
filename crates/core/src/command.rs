@@ -49,8 +49,18 @@ impl CommandRegistry {
         registry
     }
 
+    /// Register a command, replacing any existing command with the same id.
     pub fn register(&mut self, command: Command) {
-        self.commands.push(command);
+        if let Some(existing) = self.commands.iter_mut().find(|c| c.id == command.id) {
+            *existing = command;
+        } else {
+            self.commands.push(command);
+        }
+    }
+
+    /// Remove every command whose id starts with `prefix` (used for dynamic entries).
+    pub fn remove_by_id_prefix(&mut self, prefix: &str) {
+        self.commands.retain(|c| !c.id.starts_with(prefix));
     }
 
     pub fn commands(&self) -> &[Command] {
@@ -180,7 +190,7 @@ impl CommandRegistry {
                 name: "Command Palette".into(),
                 category: CommandCategory::Tools,
                 description: "Search and run any command".into(),
-                default_shortcut: Some("^Space+p".into()),
+                default_shortcut: Some("^Space+:".into()),
                 action: Action::ToggleCommandPalette,
             },
             Command {
@@ -252,7 +262,7 @@ impl CommandRegistry {
                 name: "Toggle Passthrough Mode".into(),
                 category: CommandCategory::Tools,
                 description: "Send all key inputs directly to the child process".into(),
-                default_shortcut: Some("^Space+Esc".into()),
+                default_shortcut: Some("^Space+t".into()),
                 action: Action::TogglePassthrough,
             },
             Command {
@@ -395,5 +405,35 @@ impl CommandRegistry {
         for cmd in defaults {
             self.register(cmd);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmux_cmd(id: &str) -> Command {
+        Command {
+            id: id.into(),
+            name: id.into(),
+            category: CommandCategory::Agents,
+            description: String::new(),
+            default_shortcut: None,
+            action: Action::AttachTmux { session: id.into() },
+        }
+    }
+
+    #[test]
+    fn test_register_replaces_same_id() {
+        let mut reg = CommandRegistry::new();
+        let base = reg.commands().len();
+        reg.register(tmux_cmd("agents.attach_tmux_a"));
+        reg.register(tmux_cmd("agents.attach_tmux_a"));
+        assert_eq!(reg.commands().len(), base + 1);
+
+        reg.register(tmux_cmd("agents.attach_tmux_b"));
+        reg.remove_by_id_prefix("agents.attach_tmux_");
+        assert_eq!(reg.commands().len(), base);
+        assert!(reg.find_by_id("agents.attach_tmux").is_some());
     }
 }

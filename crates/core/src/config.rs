@@ -6,17 +6,26 @@ use crate::theme::ThemeConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentProfileConfig {
+    /// Display name; defaults to the profile key when omitted.
+    #[serde(default)]
     pub name: String,
     pub command: String,
+    #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
     pub default_cwd: Option<PathBuf>,
+    #[serde(default)]
     pub hook_type: Option<String>,
+    #[serde(default)]
     pub status_patterns: Vec<String>,
+    #[serde(default)]
     pub prompt_snippets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NotificationConfig {
     pub enabled: bool,
     pub desktop_notifications: bool,
@@ -38,6 +47,7 @@ impl Default for NotificationConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub leader: String,
     pub which_key_delay_ms: u64,
@@ -48,7 +58,6 @@ pub struct Config {
     pub notifications: NotificationConfig,
     pub agents: HashMap<String, AgentProfileConfig>,
     pub custom_keys: HashMap<String, String>,
-    #[serde(default)]
     pub run_in_background: bool,
 }
 
@@ -118,11 +127,51 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Parse a (possibly partial) config file. Missing fields take their defaults and the
+    /// built-in agent profiles are kept unless the file overrides them by name.
     pub fn load_from_str(s: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(s)
+        let mut cfg: Config = toml::from_str(s)?;
+        for (key, profile) in Config::default().agents {
+            cfg.agents.entry(key).or_insert(profile);
+        }
+        for (key, profile) in cfg.agents.iter_mut() {
+            if profile.name.is_empty() {
+                profile.name = key.clone();
+            }
+        }
+        Ok(cfg)
     }
 
     pub fn to_toml_string(&self) -> Result<String, toml::ser::Error> {
         toml::to_string_pretty(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_partial_config_keeps_defaults() {
+        let cfg =
+            Config::load_from_str("leader = \"ctrl+a\"\n[notifications]\nsound = true\n").unwrap();
+        assert_eq!(cfg.leader, "ctrl+a");
+        assert!(cfg.notifications.sound);
+        assert!(cfg.notifications.enabled);
+        assert_eq!(cfg.scrollback_lines, Config::default().scrollback_lines);
+        assert!(cfg.agents.contains_key("claude"));
+    }
+
+    #[test]
+    fn test_custom_agent_merges_with_builtin_profiles() {
+        let cfg = Config::load_from_str("[agents.aider]\ncommand = \"aider\"\n").unwrap();
+        assert_eq!(cfg.agents["aider"].name, "aider");
+        assert!(cfg.agents["aider"].args.is_empty());
+        assert!(cfg.agents.contains_key("codex"));
+    }
+
+    #[test]
+    fn test_invalid_config_is_an_error() {
+        assert!(Config::load_from_str("leader = [").is_err());
     }
 }

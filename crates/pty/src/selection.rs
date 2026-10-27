@@ -77,7 +77,7 @@ impl Selection {
             if let Some(line) = lines.get(row as usize) {
                 let chars: Vec<char> = line.chars().collect();
                 if self.mode == SelectionMode::Line {
-                    result.push(line.clone());
+                    result.push(line.replace(crate::vt_grid::WIDE_CONTINUATION, ""));
                     continue;
                 }
 
@@ -90,7 +90,10 @@ impl Selection {
 
                 if start_col < chars.len() {
                     let slice_end = (end_col + 1).min(chars.len());
-                    let selected_chars: String = chars[start_col..slice_end].iter().collect();
+                    let selected_chars: String = chars[start_col..slice_end]
+                        .iter()
+                        .filter(|c| **c != crate::vt_grid::WIDE_CONTINUATION)
+                        .collect();
                     result.push(selected_chars);
                 } else {
                     result.push(String::new());
@@ -112,6 +115,14 @@ mod tests {
         sel.update(Coord { col: 5, row: 0 });
         let lines = vec!["hello world".to_string()];
         assert_eq!(sel.extract_text(&lines), "llo ");
+    }
+
+    #[test]
+    fn test_selection_skips_wide_char_placeholders() {
+        let mut sel = Selection::new(Coord { col: 0, row: 0 }, SelectionMode::Normal);
+        sel.update(Coord { col: 3, row: 0 });
+        let lines = vec!["\u{4e2d}\0\u{6587}\0".to_string()];
+        assert_eq!(sel.extract_text(&lines), "\u{4e2d}\u{6587}");
     }
 
     #[test]

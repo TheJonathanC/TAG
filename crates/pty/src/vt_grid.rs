@@ -6,6 +6,9 @@ use vt100::{Color as VtColor, Screen};
 use crate::ring_buffer::ScrollbackRing;
 use crate::selection::Selection;
 
+/// Placeholder for the second column of a double-width character in `get_row_text`.
+pub const WIDE_CONTINUATION: char = '\0';
+
 type ViewportCache = Option<(u64, usize, Option<Selection>, Vec<RatLine<'static>>)>;
 
 pub struct VtGrid {
@@ -196,6 +199,11 @@ impl VtGrid {
         let mut row_text = String::with_capacity(cols as usize);
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
+                if cell.is_wide_continuation() {
+                    // Keep one char per column for selection math; stripped when copying.
+                    row_text.push(WIDE_CONTINUATION);
+                    continue;
+                }
                 let s = cell.contents();
                 if s.is_empty() {
                     row_text.push(' ');

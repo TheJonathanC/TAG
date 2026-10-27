@@ -36,7 +36,7 @@ pub const TOUR_STEPS: &[TourStep] = &[
     },
     TourStep {
         title: "Tab Tray & Command Palette",
-        body: "Open the Tab Tray (Leader+b) to view all panes across all workspaces.\nPress Leader+p anytime to fuzzy search and run every command.",
+        body: "Open the Tab Tray (Leader+b) to view all panes across all workspaces.\nPress Leader+: anytime to fuzzy search and run every command.",
         hint: "Press Space or Enter to continue",
     },
     TourStep {

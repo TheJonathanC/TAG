@@ -55,6 +55,7 @@ pub struct PtyPane {
     cached_tmux_agent: Mutex<Option<(String, Option<String>, std::time::Instant)>>,
     cached_tmux_donut: Mutex<Option<(String, bool, std::time::Instant)>>,
     cached_fg_proc: Mutex<ForegroundProcCache>,
+    cached_tmux_session: Mutex<Option<(Option<String>, std::time::Instant)>>,
 }
 
 pub fn clean_tmux_session_name(name: &str) -> String {
@@ -131,6 +132,7 @@ impl PtyPane {
         let tx = event_tx.clone();
         let pane_id = id;
         let alive_flag = is_alive.clone();
+        let reaper_child = child_arc.clone();
 
         thread::Builder::new()
             .name(format!("pty-reader-{}", id.0))
@@ -155,10 +157,8 @@ impl PtyPane {
                     }
                 }
                 alive_flag.store(false, Ordering::SeqCst);
-                let _ = tx.send(AppEvent::PtyExited {
-                    pane_id,
-                    exit_code: None,
-                });
+                let exit_code = reap_exited_child(&reaper_child);
+                let _ = tx.send(AppEvent::PtyExited { pane_id, exit_code });
             })?;
 
         let vt = VtGrid::new(width.max(1), height.max(1), scrollback_capacity);
@@ -191,6 +191,7 @@ impl PtyPane {
             cached_tmux_agent: Mutex::new(None),
             cached_tmux_donut: Mutex::new(None),
             cached_fg_proc: Mutex::new(None),
+            cached_tmux_session: Mutex::new(None),
         })
     }
 
@@ -233,14 +234,37 @@ impl PtyPane {
 
     pub fn kill_child(&mut self) {
         self.is_alive.store(false, Ordering::SeqCst);
-        if let Ok(mut lock) = self.child.lock() {
-            if let Some(mut child) = lock.take() {
-                let _ = child.kill();
-            }
+        let child = self.child.lock().ok().and_then(|mut lock| lock.take());
+        if let Some(mut child) = child {
+            // kill() waits for a SIGHUP grace period and wait() reaps the process;
+            // do both off the UI thread so closing a pane never blocks or leaves a zombie.
+            let _ = thread::Builder::new()
+                .name(format!("pty-reaper-{}", self.id.0))
+                .spawn(move || {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                });
         }
     }
 
+    /// The tmux session this pane is attached to, if any. Cached briefly because it is
+    /// queried several times per frame (title, kind, status) and may inspect /proc or tmux.
     pub fn tmux_session_name(&self) -> Option<String> {
+        if let Ok(mut cache) = self.cached_tmux_session.lock() {
+            if let Some((ref sess, ts)) = *cache {
+                if ts.elapsed() < std::time::Duration::from_millis(1500) {
+                    return sess.clone();
+                }
+            }
+            let sess = self.compute_tmux_session_name();
+            *cache = Some((sess.clone(), std::time::Instant::now()));
+            sess
+        } else {
+            self.compute_tmux_session_name()
+        }
+    }
+
+    fn compute_tmux_session_name(&self) -> Option<String> {
         if let Some(idx) = self.args.iter().position(|a| a == "-s" || a == "-t") {
             if let Some(sess) = self.args.get(idx + 1) {
                 let clean = clean_tmux_session_name(sess);
@@ -708,7 +732,11 @@ impl Pane for PtyPane {
         frame.render_widget(paragraph, inner_area);
 
         // Render cursor if focused, active, and not scrolled
-        if is_focused && self.is_active() && self.scroll_offset == 0 {
+        if is_focused
+            && self.is_active()
+            && self.scroll_offset == 0
+            && !self.vt.screen().hide_cursor()
+        {
             let (col, row) = self.vt.cursor_position();
             if col < inner_area.width && row < inner_area.height {
                 frame.set_cursor_position((inner_area.x + col, inner_area.y + row));
@@ -757,7 +785,14 @@ impl Pane for PtyPane {
                     return res;
                 }
             }
-            let res = (self.command.clone(), self.args.clone(), self.cwd.clone());
+            #[cfg(target_os = "macos")]
+            let current_cwd = self
+                .child_pid
+                .and_then(macos_process_cwd)
+                .or_else(|| self.cwd.clone());
+            #[cfg(not(target_os = "macos"))]
+            let current_cwd = self.cwd.clone();
+            let res = (self.command.clone(), self.args.clone(), current_cwd);
             *cache = Some((
                 res.0.clone(),
                 res.1.clone(),
@@ -783,6 +818,50 @@ impl Drop for PtyPane {
     fn drop(&mut self) {
         self.kill_child();
     }
+}
+
+/// Current working directory of a process on macOS (no /proc), via `lsof`.
+#[cfg(target_os = "macos")]
+fn macos_process_cwd(pid: u32) -> Option<PathBuf> {
+    let output = std::process::Command::new("lsof")
+        .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix('n'))
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+}
+
+/// After the PTY reports EOF, give the child a short moment to exit and reap it,
+/// returning its exit code (None if it is still running, e.g. it detached from the tty).
+fn reap_exited_child(child: &Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>>) -> Option<i32> {
+    for attempt in 0..20 {
+        if attempt > 0 {
+            thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let Ok(mut lock) = child.lock() else {
+            return None;
+        };
+        let Some(c) = lock.as_mut() else {
+            return None; // already being killed/reaped elsewhere
+        };
+        match c.try_wait() {
+            Ok(Some(status)) => {
+                lock.take();
+                return Some(status.exit_code() as i32);
+            }
+            Ok(None) => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -898,14 +977,12 @@ pub fn get_tmux_session_for_client_or_tty(client_pid: u32, tty: Option<&str>) ->
     if let Ok(cache) = CLIENT_CACHE.lock() {
         if let Some((ref pid_map, ref tty_map, ts)) = *cache {
             if ts.elapsed() < std::time::Duration::from_millis(1500) {
-                if let Some(sess) = pid_map.get(&client_pid) {
-                    return Some(sess.clone());
-                }
-                if let Some(t) = tty {
-                    if let Some(sess) = tty_map.get(t) {
-                        return Some(sess.clone());
-                    }
-                }
+                // Fresh snapshot: answer from it, including "not a tmux client",
+                // instead of re-running `tmux list-clients` for every lookup.
+                return pid_map
+                    .get(&client_pid)
+                    .or_else(|| tty.and_then(|t| tty_map.get(t)))
+                    .cloned();
             }
         }
     }
