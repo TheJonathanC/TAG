@@ -1,10 +1,14 @@
 [package]
 name = "tag-keys"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+description = "Leader-key state machine and keymaps for TAG"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-tag-core = { path = "../core" }
+tag-core = { path = "../core", version = "0.1.0" }
 crossterm = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

@@ -1,10 +1,14 @@
 [package]
 name = "tag-pty"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+description = "PTY-backed terminal panes for TAG"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-tag-core = { path = "../core" }
+tag-core = { path = "../core", version = "0.1.0" }
 portable-pty = { workspace = true }
 vt100 = { workspace = true }
 ratatui = { workspace = true }
