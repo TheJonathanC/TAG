@@ -25,11 +25,8 @@ impl PeerChatPane {
         };
         pane.messages.push((
             "System".into(),
-            "Connected to peer room #dev-agents.".into(),
-        ));
-        pane.messages.push((
-            "Alice".into(),
-            "Deploy completed on staging worktree.".into(),
+            "Local scratch chat: messages stay in this pane and are not sent over the network."
+                .into(),
         ));
         pane
     }
@@ -44,8 +41,16 @@ impl Pane for PeerChatPane {
         self.title.clone()
     }
 
+    fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+
     fn kind(&self) -> PaneKind {
         PaneKind::Applet
+    }
+
+    fn applet_name(&self) -> Option<&'static str> {
+        Some("chat")
     }
 
     fn is_active(&self) -> bool {
@@ -54,13 +59,15 @@ impl Pane for PeerChatPane {
 
     fn send_input(&mut self, data: &[u8]) {
         if let Ok(text) = std::str::from_utf8(data) {
+            // Pasted text arrives wrapped in bracketed-paste markers
+            let text = text.replace("\x1b[200~", "").replace("\x1b[201~", "");
             for c in text.chars() {
                 if c == '\r' || c == '\n' {
                     if !self.input.is_empty() {
                         let msg = std::mem::take(&mut self.input);
                         self.messages.push(("You".into(), msg));
                     }
-                } else if c == '\x08' {
+                } else if c == '\x08' || c == '\x7f' {
                     self.input.pop();
                 } else if !c.is_control() {
                     self.input.push(c);
@@ -83,7 +90,7 @@ impl Pane for PeerChatPane {
         };
 
         let block = Block::default()
-            .title(" Peer Chat Applet ")
+            .title(" Peer Chat (local only) ")
             .borders(Borders::ALL)
             .border_style(border_style);
 
@@ -123,5 +130,21 @@ impl Pane for PeerChatPane {
         let input_line = format!("Chat > {}_", self.input);
         let p = Paragraph::new(input_line).style(theme.text);
         frame.render_widget(p, input_area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_paste_markers_and_backspace() {
+        let mut pane = PeerChatPane::new(PaneId(1));
+        pane.send_input(b"\x1b[200~hello\x1b[201~");
+        assert_eq!(pane.input, "hello");
+        pane.send_input(&[0x7f]);
+        assert_eq!(pane.input, "hell");
+        pane.send_input(b"\r");
+        assert_eq!(pane.messages.last().map(|m| m.1.as_str()), Some("hell"));
     }
 }

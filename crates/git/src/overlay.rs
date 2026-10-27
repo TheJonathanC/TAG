@@ -15,9 +15,12 @@ pub enum GitPromptMode {
     ConfirmMerge {
         worktree_name: String,
         branch: String,
+        /// Branch currently checked out in the main worktree (the merge target)
+        target_branch: String,
     },
     ConfirmDelete {
         worktree_name: String,
+        worktree_path: std::path::PathBuf,
     },
 }
 
@@ -32,6 +35,8 @@ pub struct GitOverlayState {
     pub is_open: bool,
     pub selected_section: usize, // 0: worktrees, 1: files, 2: diff
     pub selected_index: usize,
+    /// Worktree whose status/diff is shown; stays put while other sections are navigated
+    pub selected_worktree: usize,
     pub diff_scroll: usize,
     pub prompt: Option<GitPromptState>,
 }
@@ -68,7 +73,7 @@ pub fn render_git_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Git Worktrees & Diff (Tab: Section | Enter: Open | c: New WT | m: Merge | d: Delete | Esc: Close) ")
+        .title(" Git Worktrees & Diff (Tab: Section | Enter: Open | c: New WT | m: Merge | A: Abort merge | d: Delete | Esc: Close) ")
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -101,8 +106,12 @@ pub fn render_git_overlay(
 
     let mut wt_items = Vec::new();
     for (i, wt) in worktrees.iter().enumerate() {
-        let is_sel = state.selected_section == 0 && i == state.selected_index;
-        let prefix = if is_sel { "> " } else { "  " };
+        let is_sel = i == state.selected_worktree;
+        let prefix = match (is_sel, state.selected_section == 0) {
+            (true, true) => "> ",
+            (true, false) => "* ",
+            _ => "  ",
+        };
         let branch_name = wt.branch.as_deref().unwrap_or("detached");
         let main_badge = if wt.is_main { " [main]" } else { "" };
 
@@ -251,13 +260,14 @@ pub fn render_git_overlay(
             GitPromptMode::ConfirmMerge {
                 worktree_name,
                 branch,
+                target_branch,
             } => (
-                " Merge Worktree into Main ",
+                " Merge Worktree ",
                 vec![
                     Line::from(Span::styled(
                         format!(
-                            " Merge branch '{}' (worktree '{}') into main?",
-                            branch, worktree_name
+                            " Merge branch '{}' (worktree '{}') into '{}' (main worktree)?",
+                            branch, worktree_name, target_branch
                         ),
                         theme.title_focused,
                     )),
@@ -268,7 +278,7 @@ pub fn render_git_overlay(
                     )),
                 ],
             ),
-            GitPromptMode::ConfirmDelete { worktree_name } => (
+            GitPromptMode::ConfirmDelete { worktree_name, .. } => (
                 " Delete Worktree ",
                 vec![
                     Line::from(Span::styled(

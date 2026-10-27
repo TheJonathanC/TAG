@@ -812,6 +812,14 @@ impl Pane for PtyPane {
     fn tmux_session_name(&self) -> Option<String> {
         self.tmux_session_name()
     }
+
+    fn application_cursor(&self) -> bool {
+        self.vt.screen().application_cursor()
+    }
+
+    fn bracketed_paste(&self) -> bool {
+        self.vt.screen().bracketed_paste()
+    }
 }
 
 impl Drop for PtyPane {

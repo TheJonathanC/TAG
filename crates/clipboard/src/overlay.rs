@@ -6,6 +6,8 @@ use ratatui::Frame;
 
 use tag_core::theme::Theme;
 
+use std::collections::HashMap;
+
 use crate::snippets::SnippetBank;
 
 #[derive(Default)]
@@ -13,6 +15,61 @@ pub struct SnippetOverlayState {
     pub is_open: bool,
     pub selected_index: usize,
     pub search_query: String,
+    /// Active `{{placeholder}}` prompt while filling in a template
+    pub fill: Option<SnippetFillState>,
+}
+
+/// Collects values for a template's `{{placeholders}}` one at a time.
+#[derive(Debug, Clone)]
+pub struct SnippetFillState {
+    pub template: String,
+    pub placeholders: Vec<String>,
+    pub values: HashMap<String, String>,
+    pub current: usize,
+    pub input: String,
+}
+
+impl SnippetFillState {
+    pub fn current_placeholder(&self) -> &str {
+        self.placeholders
+            .get(self.current)
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+}
+
+impl SnippetOverlayState {
+    /// Start inserting `template`. Returns the text to paste immediately when the
+    /// template has no placeholders; otherwise starts prompting and returns None.
+    pub fn begin_fill(&mut self, template: &str) -> Option<String> {
+        let placeholders = SnippetBank::extract_placeholders(template);
+        if placeholders.is_empty() {
+            self.fill = None;
+            return Some(template.to_string());
+        }
+        self.fill = Some(SnippetFillState {
+            template: template.to_string(),
+            placeholders,
+            values: HashMap::new(),
+            current: 0,
+            input: String::new(),
+        });
+        None
+    }
+
+    /// Accept the value typed for the current placeholder. Returns the rendered text
+    /// once every placeholder has a value.
+    pub fn submit_fill_value(&mut self) -> Option<String> {
+        let fill = self.fill.as_mut()?;
+        let name = fill.current_placeholder().to_string();
+        fill.values.insert(name, std::mem::take(&mut fill.input));
+        fill.current += 1;
+        if fill.current < fill.placeholders.len() {
+            return None;
+        }
+        let fill = self.fill.take()?;
+        Some(SnippetBank::render(&fill.template, &fill.values))
+    }
 }
 
 pub fn render_snippet_overlay(
@@ -94,6 +151,33 @@ pub fn render_snippet_overlay(
     let list = List::new(list_items);
     frame.render_widget(list, list_area);
 
+    // Placeholder prompt replaces the preview while filling in a template
+    if let Some(ref fill) = state.fill {
+        let prompt_area = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(4),
+            width: inner.width,
+            height: 4,
+        };
+        let p_block = Block::default()
+            .title(format!(
+                " Fill placeholder {}/{} (Enter: next, Esc: cancel) ",
+                fill.current + 1,
+                fill.placeholders.len()
+            ))
+            .borders(Borders::TOP)
+            .border_style(theme.border_focused);
+        let p = Paragraph::new(format!(
+            "{{{{{}}}}} = {}_",
+            fill.current_placeholder(),
+            fill.input
+        ))
+        .style(theme.title_focused)
+        .block(p_block);
+        frame.render_widget(p, prompt_area);
+        return;
+    }
+
     // Template preview at bottom
     if let Some(snip) = bank.snippets.get(state.selected_index) {
         let preview_area = Rect {
@@ -113,5 +197,27 @@ pub fn render_snippet_overlay(
             .block(p_block);
 
         frame.render_widget(p, preview_area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fill_prompts_for_each_placeholder() {
+        let mut state = SnippetOverlayState::default();
+        assert_eq!(state.begin_fill("plain").as_deref(), Some("plain"));
+
+        assert_eq!(state.begin_fill("cargo test {{name}} -- {{flag}}"), None);
+        state.fill.as_mut().unwrap().input = "parser".into();
+        assert_eq!(state.submit_fill_value(), None);
+        assert_eq!(state.fill.as_ref().unwrap().current_placeholder(), "flag");
+        state.fill.as_mut().unwrap().input = "--nocapture".into();
+        assert_eq!(
+            state.submit_fill_value().as_deref(),
+            Some("cargo test parser -- --nocapture")
+        );
+        assert!(state.fill.is_none());
     }
 }

@@ -11,7 +11,8 @@ pub fn render_help_overlay(
     frame: &mut Frame,
     total_area: Rect,
     _keymap: &Keymap,
-    scroll_offset: usize,
+    scroll_offset: &mut usize,
+    version: &str,
     theme: &Theme,
 ) {
     let modal_width = (total_area.width * 8 / 10)
@@ -35,7 +36,7 @@ pub fn render_help_overlay(
     let block = Block::default()
         .title(format!(
             " TAG Complete Feature Guide & Help v{} (Up/Down Scroll, Esc to close) ",
-            env!("CARGO_PKG_VERSION")
+            version
         ))
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
@@ -199,9 +200,12 @@ pub fn render_help_overlay(
     }
 
     let visible_height = inner.height as usize;
+    // Clamp so scrolling past the end doesn't leave a blank page
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    *scroll_offset = (*scroll_offset).min(max_scroll);
     let scrolled_lines: Vec<Line<'static>> = lines
         .into_iter()
-        .skip(scroll_offset)
+        .skip(*scroll_offset)
         .take(visible_height)
         .collect();
 

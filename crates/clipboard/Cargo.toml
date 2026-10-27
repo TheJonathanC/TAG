@@ -18,3 +18,4 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 ratatui = { workspace = true }
 image = { workspace = true }
+libc = { workspace = true }

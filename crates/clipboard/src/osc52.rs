@@ -81,87 +81,60 @@ pub fn get_clipboard_text() -> Option<String> {
     }
 
     // 2. Wayland fallback: wl-paste
-    if let Ok(output) = std::process::Command::new("wl-paste")
-        .args(["--no-newline"])
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout).to_string();
-            if !text.is_empty() {
-                set_internal_clipboard(&text);
-                return Some(text);
+    let mut tools: Vec<(&str, &[&str])> = Vec::new();
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        tools.push(("wl-paste", &["--no-newline"]));
+    }
+    if std::env::var_os("DISPLAY").is_some() {
+        tools.push(("xclip", &["-selection", "clipboard", "-o"]));
+        tools.push(("xsel", &["--clipboard", "--output"]));
+    }
+    if cfg!(target_os = "macos") {
+        tools.push(("pbpaste", &[]));
+    }
+    if is_wsl() {
+        tools.push((
+            "powershell.exe",
+            &["-NoProfile", "-Command", "Get-Clipboard"],
+        ));
+    }
+
+    for (tool, args) in tools {
+        if let Ok(output) = std::process::Command::new(tool)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            if output.status.success() {
+                let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+                if tool == "powershell.exe" {
+                    text = text.trim_end().to_string();
+                }
+                if !text.is_empty() {
+                    set_internal_clipboard(&text);
+                    return Some(text);
+                }
             }
         }
     }
 
-    // 3. X11 fallback: xclip
-    if let Ok(output) = std::process::Command::new("xclip")
-        .args(["-selection", "clipboard", "-o"])
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout).to_string();
-            if !text.is_empty() {
-                set_internal_clipboard(&text);
-                return Some(text);
-            }
-        }
-    }
-
-    // 4. X11 fallback: xsel
-    if let Ok(output) = std::process::Command::new("xsel")
-        .args(["--clipboard", "--output"])
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout).to_string();
-            if !text.is_empty() {
-                set_internal_clipboard(&text);
-                return Some(text);
-            }
-        }
-    }
-
-    // 5. macOS fallback: pbpaste
-    if let Ok(output) = std::process::Command::new("pbpaste")
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout).to_string();
-            if !text.is_empty() {
-                set_internal_clipboard(&text);
-                return Some(text);
-            }
-        }
-    }
-
-    // 6. Windows / WSL fallback: powershell.exe Get-Clipboard
-    if let Ok(output) = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", "Get-Clipboard"])
-        .stdin(std::process::Stdio::null())
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_string();
-            if !text.is_empty() {
-                set_internal_clipboard(&text);
-                return Some(text);
-            }
-        }
-    }
-
-    // 7. Internal clipboard fallback (last text copied inside TAG)
     get_internal_clipboard()
 }
 
 /// Emits an OSC 52 escape sequence for clipboard synchronization.
 /// Handles both raw terminals and tmux environments (via DCS passthrough).
+/// True when running under Windows Subsystem for Linux (where powershell.exe is reachable).
+pub fn is_wsl() -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|r| r.to_lowercase().contains("microsoft"))
+            .unwrap_or(false)
+}
+
 pub fn emit_osc52(text: &str) {
     let encoded = base64_encode(text.as_bytes());
 

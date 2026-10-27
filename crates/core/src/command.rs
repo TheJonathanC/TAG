@@ -352,7 +352,7 @@ impl CommandRegistry {
                 id: "applets.chat".into(),
                 name: "Applet: Peer Chat".into(),
                 category: CommandCategory::Tools,
-                description: "Spawn native multi-agent / developer peer chat pane".into(),
+                description: "Spawn a local scratch chat pane (no network)".into(),
                 default_shortcut: None,
                 action: Action::SpawnApplet {
                     name: "chat".into(),

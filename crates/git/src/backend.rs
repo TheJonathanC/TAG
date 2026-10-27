@@ -35,7 +35,7 @@ pub trait GitBackend: Send + Sync {
     fn delete_worktree(
         &self,
         repo_path: &std::path::Path,
-        name: &str,
+        worktree_path: &std::path::Path,
         force: bool,
     ) -> Result<(), anyhow::Error>;
     fn get_diff(&self, path: &std::path::Path) -> Result<String, anyhow::Error>;

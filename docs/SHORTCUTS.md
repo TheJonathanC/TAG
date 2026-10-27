@@ -33,7 +33,7 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | `Mouse Drag & Release` | Select & Auto-Copy | Draws selection and immediately copies text to clipboard (OSC 52 + local) |
 | `Ctrl+Shift+C` | Copy Selection | Copies highlighted selection to clipboard over SSH/Termius and local desktop |
 | `Ctrl+C (with selection)` | Smart Copy | Copies selection when active; acts as standard SIGINT cancel when no selection |
-| `Leader+y` / `Leader+c` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
+| `Leader+y` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
 | `Leader+v` / `Leader+p` | Paste Clipboard | Leader shortcut to paste text from clipboard into focused pane |
 | `Ctrl+Shift+V` / `Shift+Ins` | Paste Clipboard | Direct shortcut to paste text from system clipboard into the focused pane |
 | `Shift + Mouse Drag` | Terminal Selection | Bypasses in-app mouse capture for terminal emulator's native selection |
@@ -45,8 +45,10 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | `Leader+Space` / `Leader+:` | Command Palette | Fuzzy search and run all commands |
 | `Leader+?` / `F1` | Cheat-Sheet | Context-aware shortcut help |
 | `Pause after Leader` | Which-Key Popup | Live prompt of available chords |
-| `Leader+U` | Update TAG | Check for updates and run self-upgrade wizard |
-| `Leader+Esc` | Passthrough Mode | Send all keystrokes directly to child |
+| `Leader+U` | Update TAG | Shows how to upgrade (run `tag update` in a shell) |
+| `Leader+t` | Passthrough Mode | Send all keystrokes except the leader directly to child |
+| `Leader+Leader` | Send Leader | Send a literal `Ctrl+Space` to the focused pane |
+| `Leader+Esc` | Cancel | Cancel a pending leader chord |
 | `Leader+a` | Attention Queue | Review and jump to pending agent requests |
 | `Leader+u` | Token Usage & Costs | Usage dashboard, rolling windows, and rates |
 | `Leader+g` | Git Worktrees | Worktree lifecycle, status, and diff viewer |

@@ -93,4 +93,16 @@ pub trait Pane: Send + Sync {
     fn tmux_session_name(&self) -> Option<String> {
         None
     }
+    /// Whether the program enabled application cursor keys (DECCKM)
+    fn application_cursor(&self) -> bool {
+        false
+    }
+    /// Whether the program enabled bracketed paste mode
+    fn bracketed_paste(&self) -> bool {
+        false
+    }
+    /// For built-in applets, the name used to recreate them (e.g. "chat", "poker")
+    fn applet_name(&self) -> Option<&'static str> {
+        None
+    }
 }

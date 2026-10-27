@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
@@ -161,9 +161,14 @@ impl UsageStore {
         Ok(row)
     }
 
+    /// Usage since local midnight (the user's "today", not UTC's).
     pub fn query_today(&self) -> Result<UsageAggregate, rusqlite::Error> {
-        let now = Utc::now();
-        let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let today_start = Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .and_then(|midnight| midnight.and_local_timezone(Local).earliest())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|| Utc::now() - Duration::hours(24));
         self.query_aggregate_since(today_start)
     }
 

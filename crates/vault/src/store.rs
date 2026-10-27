@@ -42,8 +42,31 @@ impl VaultStore {
         if !self.is_unlocked || self.derived_key.is_none() {
             return false;
         }
+        !self.idle_expired()
+    }
+
+    /// An idle timeout of 0 disables auto-lock.
+    fn idle_expired(&self) -> bool {
+        if self.idle_timeout_mins == 0 {
+            return false;
+        }
         let elapsed = Utc::now().signed_duration_since(self.last_accessed);
-        elapsed.num_minutes() < self.idle_timeout_mins as i64
+        elapsed.num_minutes() >= self.idle_timeout_mins as i64
+    }
+
+    /// Lock (and wipe decrypted secrets and key from memory) once the idle timeout
+    /// has passed. Returns true if the vault was locked by this call.
+    pub fn enforce_idle_lock(&mut self) -> bool {
+        if self.is_unlocked && self.idle_expired() {
+            self.lock();
+            return true;
+        }
+        false
+    }
+
+    /// Whether a vault file exists yet (unlocking a missing vault creates a new one).
+    pub fn exists(&self) -> bool {
+        self.path.exists()
     }
 
     pub fn lock(&mut self) {
@@ -197,6 +220,26 @@ impl VaultStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_idle_lock_wipes_and_zero_timeout_never_expires() {
+        let dir = std::env::temp_dir().join(format!("tag_test_vault_{}", rand::random::<u64>()));
+        let mut vault = VaultStore::new(dir.join("vault.enc"), 1);
+        vault.unlock("pw").unwrap();
+        vault.set_secret("K".into(), "v".into());
+        vault.last_accessed = Utc::now() - chrono::Duration::minutes(5);
+        assert!(!vault.is_unlocked());
+        assert!(vault.enforce_idle_lock());
+        assert!(vault.secrets.is_empty());
+        assert!(vault.derived_key.is_none());
+
+        let mut never = VaultStore::new(dir.join("vault.enc"), 0);
+        never.unlock("pw").unwrap();
+        never.last_accessed = Utc::now() - chrono::Duration::days(30);
+        assert!(never.is_unlocked());
+        assert!(!never.enforce_idle_lock());
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn test_vault_lifecycle() {

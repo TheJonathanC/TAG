@@ -304,6 +304,14 @@ impl Pane for AgentPane {
         self.pty.tmux_session_name()
     }
 
+    fn application_cursor(&self) -> bool {
+        Pane::application_cursor(&self.pty)
+    }
+
+    fn bracketed_paste(&self) -> bool {
+        Pane::bracketed_paste(&self.pty)
+    }
+
     fn kill(&mut self) {
         self.pty.kill();
         if let Some(ref sess) = self.client_session.take() {
