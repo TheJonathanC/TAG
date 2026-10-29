@@ -150,11 +150,8 @@ impl AgentPane {
     pub fn set_status(&mut self, status: AgentStatus) {
         self.status = status;
         self.pty.set_agent_status(Some(status.as_str()));
-        if status == AgentStatus::AwaitingInput {
-            self.pty.set_needs_attention(true);
-        } else if status == AgentStatus::Running {
-            self.pty.set_needs_attention(false);
-        }
+        self.pty
+            .set_needs_attention(status == AgentStatus::AwaitingInput);
     }
 
     pub fn status(&self) -> AgentStatus {
@@ -200,6 +197,10 @@ impl Pane for AgentPane {
     }
 
     fn send_input(&mut self, data: &[u8]) {
+        // The user answering an agent that was waiting on them resumes it
+        if self.status == AgentStatus::AwaitingInput && !data.is_empty() {
+            self.set_status(AgentStatus::Running);
+        }
         self.pty.send_input(data);
     }
 
@@ -231,7 +232,9 @@ impl Pane for AgentPane {
 
     fn handle_event(&mut self, event: &AppEvent) -> EventResult {
         if let AppEvent::AgentHook(payload) = event {
-            if payload.pane_id == Some(self.id()) || payload.agent == self.profile_name {
+            // Only hooks addressed to this pane change its status; a hook without a pane id
+            // cannot be attributed to a specific agent instance.
+            if payload.pane_id == Some(self.id()) {
                 match payload.event {
                     HookEvent::NeedsPermission | HookEvent::NeedsInput => {
                         self.set_status(AgentStatus::AwaitingInput);
@@ -299,6 +302,14 @@ impl Pane for AgentPane {
 
     fn tmux_session_name(&self) -> Option<String> {
         self.pty.tmux_session_name()
+    }
+
+    fn application_cursor(&self) -> bool {
+        Pane::application_cursor(&self.pty)
+    }
+
+    fn bracketed_paste(&self) -> bool {
+        Pane::bracketed_paste(&self.pty)
     }
 
     fn kill(&mut self) {

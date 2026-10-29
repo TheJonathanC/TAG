@@ -1,4 +1,4 @@
-use crossterm::event::{KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::{Duration, Instant};
 
 use tag_core::action::Action;
@@ -17,6 +17,8 @@ pub struct KeyStateMachine {
     state: KeyState,
     leader_press_time: Option<Instant>,
     which_key_delay: Duration,
+    /// Leader was pressed while in passthrough; return to passthrough afterwards.
+    resume_passthrough: bool,
 }
 
 impl Default for KeyStateMachine {
@@ -32,6 +34,7 @@ impl KeyStateMachine {
             state: KeyState::Normal,
             leader_press_time: None,
             which_key_delay,
+            resume_passthrough: false,
         }
     }
 
@@ -59,6 +62,7 @@ impl KeyStateMachine {
             _ => KeyState::Passthrough,
         };
         self.leader_press_time = None;
+        self.resume_passthrough = false;
     }
 
     pub fn should_show_which_key(&self) -> bool {
@@ -74,76 +78,78 @@ impl KeyStateMachine {
     pub fn process_key(&mut self, event: KeyEvent) -> Option<Action> {
         let chord = KeyChord::new(event.code, event.modifiers);
 
-        // Check for passthrough toggle escape chord
-        if self.state == KeyState::Passthrough {
-            if chord == self.keymap.leader {
-                self.state = KeyState::LeaderPending;
-                self.leader_press_time = Some(Instant::now());
-                return None;
-            }
-            // In passthrough, don't intercept other keys
-            return None;
-        }
-
         match self.state {
+            KeyState::Passthrough => {
+                // In passthrough only the leader is intercepted (to reach TAG commands)
+                if chord == self.keymap.leader {
+                    self.state = KeyState::LeaderPending;
+                    self.leader_press_time = Some(Instant::now());
+                    self.resume_passthrough = true;
+                }
+                None
+            }
             KeyState::Normal => {
                 // Check if leader was pressed
                 if chord == self.keymap.leader {
                     self.state = KeyState::LeaderPending;
                     self.leader_press_time = Some(Instant::now());
+                    self.resume_passthrough = false;
                     return None;
                 }
 
                 // Check direct bindings
-                if let Some((action, _desc)) = self.keymap.direct_bindings.get(&chord) {
-                    return Some(action.clone());
-                }
-
-                None
+                self.keymap
+                    .direct_bindings
+                    .get(&chord)
+                    .map(|(action, _desc)| action.clone())
             }
             KeyState::LeaderPending => {
-                self.state = KeyState::Normal;
+                let action = self.leader_follower_action(&chord, &event);
+                // Leader commands issued from passthrough return to passthrough
+                // (a TogglePassthrough action then flips it back to Normal).
+                self.state = if self.resume_passthrough {
+                    KeyState::Passthrough
+                } else {
+                    KeyState::Normal
+                };
                 self.leader_press_time = None;
-
-                // Check if leader followed by Esc cancels
-                match event.code {
-                    crossterm::event::KeyCode::Esc => {
-                        return None;
-                    }
-                    crossterm::event::KeyCode::Tab => {
-                        return Some(Action::NextWorkspace);
-                    }
-                    crossterm::event::KeyCode::BackTab => {
-                        return Some(Action::PrevWorkspace);
-                    }
-                    crossterm::event::KeyCode::Char(c) => {
-                        // Normalize shift key if uppercase
-                        let ch = if event.modifiers.contains(KeyModifiers::SHIFT) {
-                            c.to_ascii_uppercase()
-                        } else {
-                            c
-                        };
-
-                        if let Some((action, _desc)) = self.keymap.leader_bindings.get(&ch) {
-                            return Some(action.clone());
-                        }
-
-                        // Try case-inverted lookup if exact case not found
-                        let alt_ch = if ch.is_ascii_uppercase() {
-                            ch.to_ascii_lowercase()
-                        } else {
-                            ch.to_ascii_uppercase()
-                        };
-                        if let Some((action, _desc)) = self.keymap.leader_bindings.get(&alt_ch) {
-                            return Some(action.clone());
-                        }
-                    }
-                    _ => {}
-                }
-
-                None
+                self.resume_passthrough = false;
+                action
             }
-            KeyState::Passthrough => None,
+        }
+    }
+
+    fn leader_follower_action(&self, chord: &KeyChord, event: &KeyEvent) -> Option<Action> {
+        // Leader, Leader sends the leader key itself through to the pane
+        if *chord == self.keymap.leader {
+            return Some(Action::SendLeaderKey);
+        }
+
+        // Followers are plain (optionally shifted) keys; Ctrl/Alt combos cancel the chord
+        if event
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return None;
+        }
+
+        match event.code {
+            KeyCode::Esc => None,
+            KeyCode::Tab => Some(Action::NextWorkspace),
+            KeyCode::BackTab => Some(Action::PrevWorkspace),
+            KeyCode::Char(c) => {
+                // Normalize shift key if uppercase
+                let ch = if event.modifiers.contains(KeyModifiers::SHIFT) {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                };
+                self.keymap
+                    .leader_bindings
+                    .get(&ch)
+                    .map(|(action, _desc)| action.clone())
+            }
+            _ => None,
         }
     }
 }

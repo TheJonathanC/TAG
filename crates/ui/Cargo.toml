@@ -1,13 +1,17 @@
 [package]
 name = "tag-ui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+description = "Ratatui UI widgets for TAG"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-tag-core = { path = "../core" }
-tag-layout = { path = "../layout" }
-tag-pty = { path = "../pty" }
-tag-keys = { path = "../keys" }
+tag-core = { path = "../core", version = "0.1.0" }
+tag-layout = { path = "../layout", version = "0.1.0" }
+tag-pty = { path = "../pty", version = "0.1.0" }
+tag-keys = { path = "../keys", version = "0.1.0" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 fuzzy-matcher = { workspace = true }

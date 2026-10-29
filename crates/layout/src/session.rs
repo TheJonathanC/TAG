@@ -134,7 +134,7 @@ mod tests {
         );
 
         let temp_dir = std::env::temp_dir();
-        let session_file = temp_dir.join("tag_test_session.json");
+        let session_file = temp_dir.join(format!("tag_test_session_{}.json", std::process::id()));
         session.save_to_file(&session_file).unwrap();
 
         let loaded = SavedSession::load_from_file(&session_file).unwrap();

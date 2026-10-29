@@ -143,7 +143,7 @@ impl Keymap {
         leader_bindings.insert('L', (Action::Redraw, "Redraw screen"));
         leader_bindings.insert('U', (Action::Update, "Update TAG"));
         leader_bindings.insert('y', (Action::CopySelection, "Copy selection / yank"));
-        leader_bindings.insert('c', (Action::CopySelection, "Copy selection"));
+        leader_bindings.insert('t', (Action::TogglePassthrough, "Passthrough mode"));
         leader_bindings.insert(']', (Action::NextWorkspace, "Next workspace"));
         leader_bindings.insert('[', (Action::PrevWorkspace, "Previous workspace"));
 
@@ -152,10 +152,7 @@ impl Keymap {
             if let Some(ch) = char::from_digit(i as u32, 10) {
                 leader_bindings.insert(
                     ch,
-                    (
-                        Action::SwitchWorkspace(tag_core::pane::WorkspaceId(i)),
-                        "Switch workspace",
-                    ),
+                    (Action::SwitchWorkspaceIndex(i - 1), "Switch workspace"),
                 );
             }
         }
@@ -246,10 +243,6 @@ impl Keymap {
             (Action::PasteFromClipboard, "Paste clipboard"),
         );
         direct_bindings.insert(
-            KeyChord::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
-            (Action::PasteFromClipboard, "Paste clipboard"),
-        );
-        direct_bindings.insert(
             KeyChord::new(KeyCode::Insert, KeyModifiers::SHIFT),
             (Action::PasteFromClipboard, "Paste clipboard"),
         );
@@ -259,10 +252,7 @@ impl Keymap {
             if let Some(ch) = char::from_digit(i as u32, 10) {
                 direct_bindings.insert(
                     KeyChord::new(KeyCode::Char(ch), KeyModifiers::ALT),
-                    (
-                        Action::SwitchWorkspace(tag_core::pane::WorkspaceId(i)),
-                        "Switch workspace",
-                    ),
+                    (Action::SwitchWorkspaceIndex(i - 1), "Switch workspace"),
                 );
             }
         }

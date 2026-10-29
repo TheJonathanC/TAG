@@ -47,8 +47,16 @@ impl Pane for PokerPane {
         self.title.clone()
     }
 
+    fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+
     fn kind(&self) -> PaneKind {
         PaneKind::Applet
+    }
+
+    fn applet_name(&self) -> Option<&'static str> {
+        Some("poker")
     }
 
     fn is_active(&self) -> bool {

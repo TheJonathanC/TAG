@@ -26,11 +26,19 @@ pub struct VaultOverlayState {
     pub pending_key: String,
     pub selected_index: usize,
     pub status_message: Option<String>,
+    /// First entry of a new vault's passphrase, awaiting confirmation
+    pub pending_new_passphrase: Option<String>,
 }
 
 impl VaultOverlayState {
     pub fn clear_input(&mut self) {
         self.input_buffer.zeroize();
+    }
+
+    pub fn clear_pending_passphrase(&mut self) {
+        if let Some(mut p) = self.pending_new_passphrase.take() {
+            p.zeroize();
+        }
     }
 }
 
@@ -38,6 +46,7 @@ impl Drop for VaultOverlayState {
     fn drop(&mut self) {
         self.input_buffer.zeroize();
         self.pending_key.zeroize();
+        self.clear_pending_passphrase();
     }
 }
 
@@ -73,8 +82,28 @@ pub fn render_vault_overlay(
     let is_unlocked = vault.is_unlocked();
 
     if !is_unlocked {
+        let creating = !vault.exists();
+        let (title, prompt, hint) = if !creating {
+            (
+                " Secrets Vault [LOCKED] (Enter passphrase) ",
+                "Enter Master Passphrase:",
+                "Press Enter to unlock, Esc to close",
+            )
+        } else if state.pending_new_passphrase.is_none() {
+            (
+                " Secrets Vault [NEW] (Choose a passphrase) ",
+                "Choose a Master Passphrase for the new vault:",
+                "Press Enter to continue, Esc to close",
+            )
+        } else {
+            (
+                " Secrets Vault [NEW] (Confirm passphrase) ",
+                "Re-enter the Master Passphrase to confirm:",
+                "Press Enter to create the vault, Esc to start over",
+            )
+        };
         let block = Block::default()
-            .title(" Secrets Vault [LOCKED] (Enter passphrase) ")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(theme.warning);
 
@@ -83,17 +112,14 @@ pub fn render_vault_overlay(
 
         let mut lines = vec![
             Line::raw(""),
-            Line::from(vec![Span::styled(
-                "Enter Master Passphrase:",
-                theme.title_focused,
-            )]),
+            Line::from(vec![Span::styled(prompt, theme.title_focused)]),
             Line::from(vec![Span::styled(
                 format!(" > {}_", "*".repeat(state.input_buffer.len())),
                 theme.accent.add_modifier(Modifier::BOLD),
             )]),
             Line::raw(""),
             Line::from(vec![Span::styled(
-                "Press Enter to unlock (or initialize new vault), Esc to close",
+                hint,
                 theme.text.add_modifier(Modifier::DIM),
             )]),
         ];

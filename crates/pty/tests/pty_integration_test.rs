@@ -90,3 +90,40 @@ fn test_vt_scrollback() {
     parser.set_scrollback(5);
     assert_eq!(parser.screen().scrollback(), 5);
 }
+
+#[tokio::test]
+async fn test_exit_code_is_reported_and_child_reaped() {
+    let (tx, mut rx) = unbounded_channel::<AppEvent>();
+    let pane_id = PaneId(998);
+
+    let _pane = PtyPane::spawn(
+        pane_id,
+        "Exit Test".into(),
+        PaneKind::Shell,
+        Some("sh".into()),
+        &["-c".into(), "exit 3".into()],
+        &HashMap::new(),
+        None,
+        80,
+        24,
+        100,
+        tx,
+    )
+    .expect("spawn");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut exit = None;
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(Some(AppEvent::PtyExited {
+            pane_id: id,
+            exit_code,
+        })) = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+        {
+            if id == pane_id {
+                exit = Some(exit_code);
+                break;
+            }
+        }
+    }
+    assert_eq!(exit, Some(Some(3)), "exit code must be reaped and reported");
+}

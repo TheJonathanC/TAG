@@ -8,7 +8,7 @@ pub struct StandardGitBackend;
 impl GitBackend for StandardGitBackend {
     fn repo_status(&self, path: &Path) -> Result<RepoStatus, anyhow::Error> {
         let output = Command::new("git")
-            .args(["status", "--porcelain=v1", "-uall"])
+            .args(["status", "--porcelain=v1", "-z", "-uall"])
             .current_dir(path)
             .output()?;
 
@@ -17,50 +17,7 @@ impl GitBackend for StandardGitBackend {
             return Err(anyhow::anyhow!("git status failed: {}", stderr.trim()));
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut changed_files = Vec::new();
-
-        for line in stdout.lines() {
-            if line.len() < 3 {
-                continue;
-            }
-            let index_stat = line.as_bytes()[0] as char;
-            let wt_stat = line.as_bytes()[1] as char;
-            let path_str = line[3..].trim().to_string();
-
-            let is_conflict = index_stat == 'U'
-                || wt_stat == 'U'
-                || (index_stat == 'A' && wt_stat == 'A')
-                || (index_stat == 'D' && wt_stat == 'D');
-
-            let (desc, staged) = if is_conflict {
-                ("conflict", false)
-            } else if index_stat == '?' && wt_stat == '?' {
-                ("untracked", false)
-            } else if index_stat != ' ' && index_stat != '?' {
-                let d = match index_stat {
-                    'M' => "modified",
-                    'A' => "added",
-                    'D' => "deleted",
-                    'R' => "renamed",
-                    _ => "staged",
-                };
-                (d, true)
-            } else {
-                let d = match wt_stat {
-                    'M' => "modified",
-                    'D' => "deleted",
-                    _ => "modified",
-                };
-                (d, false)
-            };
-
-            changed_files.push(FileChange {
-                path: path_str,
-                status: desc,
-                is_staged: staged,
-            });
-        }
+        let changed_files = parse_porcelain_z(&output.stdout);
 
         let branch_out = Command::new("git")
             .args(["branch", "--show-current"])
@@ -237,11 +194,11 @@ impl GitBackend for StandardGitBackend {
     fn delete_worktree(
         &self,
         repo_path: &Path,
-        name: &str,
+        worktree_path: &Path,
         force: bool,
     ) -> Result<(), anyhow::Error> {
-        if name.is_empty() || name.starts_with('-') {
-            return Err(anyhow::anyhow!("Invalid worktree name: {}", name));
+        if worktree_path.as_os_str().is_empty() {
+            return Err(anyhow::anyhow!("Invalid worktree path"));
         }
         let main_repo = get_main_repo_path(repo_path);
         let mut cmd = Command::new("git");
@@ -249,46 +206,21 @@ impl GitBackend for StandardGitBackend {
         if force {
             cmd.arg("--force");
         }
-        cmd.args(["--", name]);
+        // Absolute path works for worktrees anywhere, not just under .worktrees/
+        cmd.arg("--").arg(worktree_path);
         cmd.current_dir(&main_repo);
 
         let output = cmd.output()?;
         if !output.status.success() {
-            let wt_rel = format!(".worktrees/{}", name);
-            let mut cmd2 = Command::new("git");
-            cmd2.args(["worktree", "remove"]);
-            if force {
-                cmd2.arg("--force");
-            }
-            cmd2.args(["--", &wt_rel]);
-            cmd2.current_dir(&main_repo);
-            let out2 = cmd2.output()?;
-
-            if !out2.status.success() {
-                let wt_abs = main_repo.join(".worktrees").join(name);
-                let wt_abs_str = wt_abs.to_string_lossy();
-                let mut cmd3 = Command::new("git");
-                cmd3.args(["worktree", "remove"]);
-                if force {
-                    cmd3.arg("--force");
-                }
-                cmd3.args(["--", &wt_abs_str]);
-                cmd3.current_dir(&main_repo);
-                let out3 = cmd3.output()?;
-
-                if !out3.status.success() {
-                    let _ = Command::new("git")
-                        .args(["worktree", "prune"])
-                        .current_dir(&main_repo)
-                        .output();
-
-                    let stderr = String::from_utf8_lossy(&out3.stderr);
-                    return Err(anyhow::anyhow!(
-                        "git worktree remove failed: {}",
-                        stderr.trim()
-                    ));
-                }
-            }
+            let _ = Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&main_repo)
+                .output();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "git worktree remove failed: {}",
+                stderr.trim()
+            ));
         }
 
         Ok(())
@@ -319,25 +251,25 @@ impl GitBackend for StandardGitBackend {
 
         if diff_str.is_empty() {
             if let Ok(status_out) = Command::new("git")
-                .args(["status", "--porcelain=v1", "-uall"])
+                .args(["status", "--porcelain=v1", "-z", "-uall"])
                 .current_dir(path)
                 .output()
             {
-                let s = String::from_utf8_lossy(&status_out.stdout);
                 let mut untracked_diff = String::new();
-                for line in s.lines() {
-                    if let Some(fpath_raw) = line.strip_prefix("?? ") {
-                        let fpath = fpath_raw.trim();
-                        untracked_diff.push_str(&format!("diff --untracked a/{0} b/{0}\n", fpath));
-                        untracked_diff.push_str(&format!("--- /dev/null\n+++ b/{}\n", fpath));
-                        let full_p = path.join(fpath);
-                        if let Ok(content) = std::fs::read_to_string(&full_p) {
-                            for cline in content.lines().take(60) {
+                for change in parse_porcelain_z(&status_out.stdout)
+                    .into_iter()
+                    .filter(|c| c.status == "untracked")
+                {
+                    let fpath = change.path;
+                    untracked_diff.push_str(&format!("diff --untracked a/{0} b/{0}\n", fpath));
+                    untracked_diff.push_str(&format!("--- /dev/null\n+++ b/{}\n", fpath));
+                    match read_preview(&path.join(&fpath)) {
+                        Some(content) => {
+                            for cline in content.lines().take(UNTRACKED_PREVIEW_LINES) {
                                 untracked_diff.push_str(&format!("+{}\n", cline));
                             }
-                        } else {
-                            untracked_diff.push_str("+[Untracked file]\n");
                         }
+                        None => untracked_diff.push_str("+[Untracked binary or unreadable file]\n"),
                     }
                 }
                 if !untracked_diff.is_empty() {
@@ -429,6 +361,77 @@ impl GitBackend for StandardGitBackend {
     }
 }
 
+const UNTRACKED_PREVIEW_LINES: usize = 60;
+const UNTRACKED_PREVIEW_BYTES: u64 = 64 * 1024;
+
+/// Read the start of an untracked file for the diff preview without loading
+/// huge files; returns None for binary or unreadable files.
+fn read_preview(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(UNTRACKED_PREVIEW_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
+    if buf.contains(&0) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Parse `git status --porcelain=v1 -z` output. Paths are raw (no quoting), and
+/// renames/copies are followed by an extra NUL-terminated original path.
+fn parse_porcelain_z(stdout: &[u8]) -> Vec<FileChange> {
+    let mut changed_files = Vec::new();
+    let mut entries = stdout.split(|&b| b == 0).filter(|e| !e.is_empty());
+
+    while let Some(entry) = entries.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let index_stat = entry[0] as char;
+        let wt_stat = entry[1] as char;
+        let path_str = String::from_utf8_lossy(&entry[3..]).into_owned();
+        if matches!(index_stat, 'R' | 'C') {
+            entries.next(); // original path of the rename/copy
+        }
+
+        let is_conflict = index_stat == 'U'
+            || wt_stat == 'U'
+            || (index_stat == 'A' && wt_stat == 'A')
+            || (index_stat == 'D' && wt_stat == 'D');
+
+        let (desc, staged) = if is_conflict {
+            ("conflict", false)
+        } else if index_stat == '?' && wt_stat == '?' {
+            ("untracked", false)
+        } else if index_stat != ' ' && index_stat != '?' {
+            let d = match index_stat {
+                'M' => "modified",
+                'A' => "added",
+                'D' => "deleted",
+                'R' => "renamed",
+                _ => "staged",
+            };
+            (d, true)
+        } else {
+            let d = match wt_stat {
+                'D' => "deleted",
+                _ => "modified",
+            };
+            (d, false)
+        };
+
+        changed_files.push(FileChange {
+            path: path_str,
+            status: desc,
+            is_staged: staged,
+        });
+    }
+
+    changed_files
+}
+
 fn get_main_repo_path(repo_path: &Path) -> PathBuf {
     if let Ok(output) = Command::new("git")
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
@@ -462,8 +465,24 @@ fn get_main_repo_path(repo_path: &Path) -> PathBuf {
     repo_path.to_path_buf()
 }
 
+/// Resolve a path inside the repository's git directory (handles `.git` files,
+/// worktrees and separate git dirs).
+pub fn git_path(repo: &Path, rel: &str) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-path", rel])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let p = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!p.is_empty()).then(|| PathBuf::from(p))
+}
+
 fn ensure_worktree_exclude(main_repo: &Path) {
-    let exclude_file = main_repo.join(".git").join("info").join("exclude");
+    let exclude_file = git_path(main_repo, "info/exclude")
+        .unwrap_or_else(|| main_repo.join(".git").join("info").join("exclude"));
     if let Some(parent) = exclude_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -488,12 +507,39 @@ fn ensure_worktree_exclude(main_repo: &Path) {
 }
 
 #[cfg(test)]
+fn unique_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_porcelain_z_handles_spaces_and_renames() {
+        let out =
+            b"?? dir/my file.txt\0R  new name.rs\0old name.rs\0 M src/lib.rs\0UU conflict.rs\0";
+        let files = parse_porcelain_z(out);
+        assert_eq!(files.len(), 4);
+        assert_eq!(files[0].path, "dir/my file.txt");
+        assert_eq!(files[0].status, "untracked");
+        assert_eq!(files[1].path, "new name.rs");
+        assert_eq!(files[1].status, "renamed");
+        assert!(files[1].is_staged);
+        assert_eq!(files[2].path, "src/lib.rs");
+        assert_eq!(files[3].status, "conflict");
+    }
+
+    #[test]
     fn test_create_worktree_in_project_worktrees_folder() {
-        let temp_dir = std::env::temp_dir().join(format!("tag_test_repo_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tag_test_repo_{}_{}",
+            std::process::id(),
+            unique_suffix()
+        ));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
         let temp_dir = std::fs::canonicalize(&temp_dir).unwrap_or(temp_dir);
@@ -551,9 +597,7 @@ mod tests {
         assert!(worktrees.iter().any(|w| w.name == "feature-x"));
 
         // Verify delete_worktree removes it cleanly
-        backend
-            .delete_worktree(&temp_dir, "feature-x", true)
-            .unwrap();
+        backend.delete_worktree(&temp_dir, &wt_path, true).unwrap();
         assert!(!wt_path.exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);

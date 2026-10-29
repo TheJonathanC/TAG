@@ -63,22 +63,7 @@ pub fn render_command_palette(
         return;
     }
 
-    // Centered modal layout (width 60%, height 50%)
-    let modal_width = (total_area.width * 6 / 10)
-        .clamp(40, 100)
-        .min(total_area.width);
-    let modal_height = (total_area.height * 5 / 10)
-        .clamp(12, 30)
-        .min(total_area.height);
-    let modal_x = (total_area.width.saturating_sub(modal_width)) / 2;
-    let modal_y = (total_area.height.saturating_sub(modal_height)) / 3;
-
-    let modal_area = Rect {
-        x: modal_x,
-        y: modal_y,
-        width: modal_width,
-        height: modal_height,
-    };
+    let modal_area = palette_modal_area(total_area);
 
     frame.render_widget(Clear, modal_area);
 
@@ -115,12 +100,7 @@ pub fn render_command_palette(
         width: inner.width,
         height: 1,
     };
-    let list_area = Rect {
-        x: inner.x,
-        y: inner.y + 2,
-        width: inner.width,
-        height: inner.height.saturating_sub(2),
-    };
+    let list_area = palette_list_area(inner);
 
     let search_line = format!(" > {}_", state.query);
     let search_p = Paragraph::new(search_line).style(theme.title_focused);
@@ -202,10 +182,104 @@ pub fn render_command_palette(
     }
 }
 
+/// Centered modal layout (width 60%, height 50%)
+fn palette_modal_area(total_area: Rect) -> Rect {
+    let modal_width = (total_area.width * 6 / 10)
+        .clamp(40, 100)
+        .min(total_area.width);
+    let modal_height = (total_area.height * 5 / 10)
+        .clamp(12, 30)
+        .min(total_area.height);
+    Rect {
+        x: (total_area.width.saturating_sub(modal_width)) / 2,
+        y: (total_area.height.saturating_sub(modal_height)) / 3,
+        width: modal_width,
+        height: modal_height,
+    }
+}
+
+fn palette_list_area(inner: Rect) -> Rect {
+    Rect {
+        x: inner.x,
+        y: inner.y + 2,
+        width: inner.width,
+        height: inner.height.saturating_sub(2),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteClick {
+    /// Click outside the palette modal
+    Outside,
+    /// Click inside the modal but not on a command row
+    Inside,
+    /// Click on the command at this index of the matched list
+    Item(usize),
+}
+
+/// Map a mouse click to a palette row, using the scroll offset from the last render.
+pub fn hit_test_palette(
+    total_area: Rect,
+    state: &PaletteState,
+    total_matches: usize,
+    col: u16,
+    row: u16,
+) -> PaletteClick {
+    let modal = palette_modal_area(total_area);
+    let inside = col >= modal.x
+        && col < modal.x + modal.width
+        && row >= modal.y
+        && row < modal.y + modal.height;
+    if !inside {
+        return PaletteClick::Outside;
+    }
+    let inner = Block::default().borders(Borders::ALL).inner(modal);
+    let list = palette_list_area(inner);
+    if row < list.y || row >= list.y + list.height || col < list.x || col >= list.x + list.width {
+        return PaletteClick::Inside;
+    }
+    let idx = state.scroll_offset + (row - list.y) as usize;
+    if idx < total_matches {
+        PaletteClick::Item(idx)
+    } else {
+        PaletteClick::Inside
+    }
+}
+
 pub fn get_selected_command<'a>(
     registry: &'a CommandRegistry,
     state: &PaletteState,
 ) -> Option<&'a Command> {
     let matched_commands = get_matched_commands(registry, &state.query);
     matched_commands.get(state.selected_index).map(|(c, _)| *c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_palette_hit_test() {
+        let area = Rect::new(0, 0, 100, 40);
+        let state = PaletteState {
+            is_open: true,
+            scroll_offset: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            hit_test_palette(area, &state, 50, 0, 0),
+            PaletteClick::Outside
+        );
+        let modal = palette_modal_area(area);
+        // first list row is border(1) + search(1) + gap(1) below the modal top
+        let first_row = modal.y + 3;
+        assert_eq!(
+            hit_test_palette(area, &state, 50, modal.x + 5, first_row),
+            PaletteClick::Item(3)
+        );
+        assert_eq!(
+            hit_test_palette(area, &state, 50, modal.x + 5, modal.y + 1),
+            PaletteClick::Inside
+        );
+    }
 }

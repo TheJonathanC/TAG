@@ -106,7 +106,7 @@ impl ImageBridge {
 
         // 2. Try CLI tools based on active environment
         // Wayland: wl-paste
-        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             if let Some(bytes) = Self::try_wl_paste() {
                 return Ok(ImageSource::RawBytes(bytes));
             }
@@ -128,8 +128,10 @@ impl ImageBridge {
         }
 
         // Windows / WSL powershell fallback
-        if let Some(bytes) = Self::try_powershell_clipboard() {
-            return Ok(ImageSource::RawBytes(bytes));
+        if crate::osc52::is_wsl() {
+            if let Some(bytes) = Self::try_powershell_clipboard() {
+                return Ok(ImageSource::RawBytes(bytes));
+            }
         }
 
         // 3. Try staged drop file (useful in SSH without X11 forwarding)
@@ -161,7 +163,8 @@ impl ImageBridge {
     }
 
     fn try_wl_paste() -> Option<Vec<u8>> {
-        for mime in &["image/png", "image/jpeg", "image/webp"] {
+        // Only formats the bundled `image` decoder supports (png, jpeg)
+        for mime in &["image/png", "image/jpeg"] {
             if let Ok(output) = Command::new("wl-paste").args(["--type", mime]).output() {
                 if output.status.success() && !output.stdout.is_empty() {
                     return Some(output.stdout);
@@ -241,21 +244,20 @@ impl ImageBridge {
                 .join("drop.jpg"),
             std::env::temp_dir().join("tag-clipboard-drop.png"),
             std::env::temp_dir().join("tag-clipboard-drop.jpg"),
-            PathBuf::from("/tmp/tag-clipboard-drop.png"),
-            PathBuf::from("/tmp/tag-clipboard-drop.jpg"),
         ];
 
         for path in &candidates {
-            if path.exists() {
-                if let Ok(metadata) = fs::metadata(path) {
-                    if let Ok(modified) = metadata.modified() {
-                        if let Ok(elapsed) = modified.elapsed() {
-                            if elapsed.as_secs() <= 180 {
-                                if let Ok(bytes) = fs::read(path) {
-                                    let _ = fs::remove_file(path);
-                                    info!("Loaded staged clipboard drop file from {:?}", path);
-                                    return Some(bytes);
-                                }
+            if !Self::is_trusted_drop_file(path) {
+                continue;
+            }
+            if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(elapsed) = modified.elapsed() {
+                        if elapsed.as_secs() <= 180 {
+                            if let Ok(bytes) = fs::read(path) {
+                                let _ = fs::remove_file(path);
+                                info!("Loaded staged clipboard drop file from {:?}", path);
+                                return Some(bytes);
                             }
                         }
                     }
@@ -265,29 +267,51 @@ impl ImageBridge {
         None
     }
 
-    fn ensure_git_exclude(worktree_path: &Path) {
-        let dot_git = worktree_path.join(".git");
-        let exclude_file = if dot_git.is_file() {
-            // Linked worktree contains a gitdir pointer
-            if let Ok(content) = fs::read_to_string(&dot_git) {
-                if let Some(gitdir_line) = content.lines().find(|l| l.starts_with("gitdir:")) {
-                    let gitdir_path = gitdir_line["gitdir:".len()..].trim();
-                    let p = PathBuf::from(gitdir_path);
-                    let abs_gitdir = if p.is_relative() {
-                        worktree_path.join(p)
-                    } else {
-                        p
-                    };
-                    abs_gitdir.join("info").join("exclude")
-                } else {
-                    dot_git.join("info").join("exclude")
-                }
-            } else {
-                dot_git.join("info").join("exclude")
-            }
-        } else {
-            dot_git.join("info").join("exclude")
+    /// Drop files may live in a shared temp dir: only accept regular files (not symlinks)
+    /// owned by the current user and not writable by others.
+    fn is_trusted_drop_file(path: &Path) -> bool {
+        let Ok(meta) = fs::symlink_metadata(path) else {
+            return false;
         };
+        if !meta.file_type().is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // SAFETY: getuid has no preconditions and cannot fail.
+            let uid = unsafe { libc::getuid() };
+            if meta.uid() != uid || meta.mode() & 0o022 != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Hide the image cache from git status, but only inside a git repository
+    /// (never create a `.git` directory in a plain folder).
+    fn ensure_git_exclude(worktree_path: &Path) {
+        let Ok(output) = Command::new("git")
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "info/exclude",
+            ])
+            .current_dir(worktree_path)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let exclude_file = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if exclude_file.as_os_str().is_empty() {
+            return;
+        }
 
         if let Some(parent) = exclude_file.parent() {
             let _ = fs::create_dir_all(parent);
@@ -313,35 +337,63 @@ impl ImageBridge {
 mod tests {
     use super::*;
 
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("tag_test_{}_{}_{}", tag, std::process::id(), nanos));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn test_image_save_buffer() {
         let dummy = vec![0u8; 4 * 10 * 10]; // 10x10 RGBA
-        let dir = std::env::temp_dir();
+        let dir = unique_temp_dir("img");
         let path = dir.join("test_dummy.png");
         let res = image::save_buffer(&path, &dummy, 10, 10, image::ExtendedColorType::Rgba8);
         assert!(res.is_ok(), "save_buffer failed: {:?}", res);
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_staged_drop() {
-        let dir = std::env::temp_dir();
-        let drop_path = dir.join("tag-clipboard-drop.png");
+        let dir = unique_temp_dir("drop");
+        let cache = dir.join(".orchestrator").join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let drop_path = cache.join("drop.png");
         let dummy = vec![1, 2, 3, 4];
-        let _ = fs::write(&drop_path, &dummy);
+        fs::write(&drop_path, &dummy).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&drop_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
 
-        let retrieved = ImageBridge::try_staged_drop(Path::new("/nonexistent"));
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap(), dummy);
+        let retrieved = ImageBridge::try_staged_drop(&dir);
+        assert_eq!(retrieved, Some(dummy));
         assert!(!drop_path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_staged_drop_rejects_symlink() {
+        let dir = unique_temp_dir("droplink");
+        let cache = dir.join(".orchestrator").join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let target = dir.join("secret.png");
+        fs::write(&target, b"x").unwrap();
+        std::os::unix::fs::symlink(&target, cache.join("drop.png")).unwrap();
+        assert!(!ImageBridge::is_trusted_drop_file(&cache.join("drop.png")));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_save_image_bytes_png() {
-        let dir = std::env::temp_dir().join("tag_test_worktree");
-        let _ = fs::create_dir_all(&dir);
-
-        // Valid 1x1 PNG bytes
+        let dir = unique_temp_dir("worktree");
         let png_1x1: [u8; 67] = [
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
             0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,

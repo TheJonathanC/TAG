@@ -59,7 +59,13 @@ impl HookServer {
                         tokio::spawn(async move {
                             let mut buf = Vec::new();
                             let mut limited = stream.take(1024 * 1024); // 1 MB limit to prevent memory exhaustion DoS
-                            if limited.read_to_end(&mut buf).await.is_ok() {
+                                                                        // Clients write one payload and close; don't let a stuck client hold a task forever
+                            let read = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                limited.read_to_end(&mut buf),
+                            )
+                            .await;
+                            if matches!(read, Ok(Ok(_))) {
                                 match serde_json::from_slice::<HookPayload>(&buf) {
                                     Ok(payload) => {
                                         info!("Received hook event: {:?}", payload.event);

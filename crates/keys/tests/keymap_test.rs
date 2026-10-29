@@ -119,3 +119,68 @@ fn test_paste_clipboard_chords() {
     let e_key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::empty());
     assert_eq!(sm.process_key(e_key), Some(Action::ToggleVaultOverlay));
 }
+
+fn leader_event() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)
+}
+
+#[test]
+fn test_leader_c_spawns_shell() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    sm.process_key(leader_event());
+    let c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(c), Some(Action::SpawnShell));
+}
+
+#[test]
+fn test_double_leader_sends_leader_key() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    sm.process_key(leader_event());
+    assert_eq!(sm.process_key(leader_event()), Some(Action::SendLeaderKey));
+    assert_eq!(sm.state(), KeyState::Normal);
+}
+
+#[test]
+fn test_ctrl_v_is_not_intercepted() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    let ev = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+    assert_eq!(sm.process_key(ev), None);
+}
+
+#[test]
+fn test_leader_followers_ignore_ctrl_and_unbound_uppercase() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    sm.process_key(leader_event());
+    let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+    assert_eq!(sm.process_key(ctrl_x), None);
+
+    // 'X' has no binding and must not fall back to 'x' (close pane)
+    sm.process_key(leader_event());
+    let shift_x = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT);
+    assert_eq!(sm.process_key(shift_x), None);
+}
+
+#[test]
+fn test_leader_in_passthrough_returns_to_passthrough() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    sm.toggle_passthrough();
+    assert_eq!(sm.process_key(leader_event()), None);
+    assert_eq!(sm.state(), KeyState::LeaderPending);
+    let b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(b), Some(Action::ToggleTabTray));
+    assert_eq!(sm.state(), KeyState::Passthrough);
+
+    // Leader+t from passthrough yields TogglePassthrough; applying it leaves passthrough
+    sm.process_key(leader_event());
+    let t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(t), Some(Action::TogglePassthrough));
+    sm.toggle_passthrough();
+    assert_eq!(sm.state(), KeyState::Normal);
+}
+
+#[test]
+fn test_workspace_number_keys_switch_by_position() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
+    assert_eq!(sm.process_key(alt_1), Some(Action::SwitchWorkspaceIndex(0)));
+}

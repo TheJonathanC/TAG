@@ -10,5 +10,5 @@ pub use osc52::{
     copy_to_clipboard, emit_osc52, get_clipboard_text, get_internal_clipboard,
     set_internal_clipboard,
 };
-pub use overlay::{render_snippet_overlay, SnippetOverlayState};
+pub use overlay::{render_snippet_overlay, SnippetFillState, SnippetOverlayState};
 pub use snippets::{Snippet, SnippetBank};

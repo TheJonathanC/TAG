@@ -106,7 +106,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 
 1. **Non-conflicting leader key.** The default leader is `Ctrl+Space`. It avoids conflicts with readline (`Ctrl+A`), tmux (`Ctrl+B`), and terminal EOF (`Ctrl+D`).
 2. **Which-Key discovery popup.** Press `Ctrl+Space` and wait 400 milliseconds. A panel appears along the bottom displaying every available follower key and what it triggers.
-3. **Command Palette (`Ctrl+Space p`).** A fuzzy-search modal listing every action available in the app alongside its active shortcut.
+3. **Command Palette (`Ctrl+Space :`).** A fuzzy-search modal listing every action available in the app alongside its active shortcut.
 4. **Contextual Cheat-Sheet (`F1` or `Ctrl+Space ?`).** A full scrollable manual and key reference inside the terminal. Use `Up`/`Down` or `PageUp`/`PageDown` to browse.
 5. **Always-on status line.** The bottom status line displays active workspaces, current input mode, pending agent count, token consumption, and context hints.
 6. **First-run tour.** A step-by-step walkthrough covering splits, workspaces, and agent tools. Trigger it anytime from the palette or keymap.
@@ -141,7 +141,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - **Keyboard copy:**
     - Press `Ctrl+Shift+C` to copy the active selection immediately.
     - Press `Ctrl+C` with active selection: smart copy copies the selection and clears the highlight. If no text is selected, `Ctrl+C` sends standard `SIGINT` to abort the running command as usual.
-    - Press `Ctrl+Space y` or `Ctrl+Space c` to yank the selection via the leader keymap.
+    - Press `Ctrl+Space y` to yank the selection via the leader keymap.
   - **Keyboard paste:**
     - Press `Ctrl+Space v` or `Ctrl+Space p` to paste via the leader keymap.
     - Press `Ctrl+Shift+V` or `Shift+Insert` to paste clipboard text into the focused pane using safe bracketed paste.
@@ -161,7 +161,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - **Click to close:** Click the `[x]` button on the top-right corner of any pane border.
   - **Shell exit:** Type `exit` or press `Ctrl+D` inside any shell to close the pane cleanly.
   - **Tab Tray close:** Press `Ctrl+Space b`, navigate to any pane, and press `x`.
-  - **Command Palette close:** Press `Ctrl+Space p` and search `Close Pane`.
+  - **Command Palette close:** Press `Ctrl+Space :` and search `Close Pane`.
   - **Move focus:** Press `Alt+h` (left), `Alt+j` (down), `Alt+k` (up), or `Alt+l` (right).
   - **Resize splits:** Drag split borders using your mouse.
   - **Switch workspaces:** Press `Alt+1` through `Alt+9`.
@@ -172,7 +172,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 - **What it is:** A stack-based snapshot mechanism for workspace layout trees.
 - **What it does:** Records snapshots of the layout tree before each split, close, or resize. If you close a pane or alter your layout by accident, undo restores the previous geometry.
 - **How to use it:**
-  - Press `Ctrl+Space Z` or choose "Undo Layout Change" from the Command Palette (`Ctrl+Space p`).
+  - Press `Ctrl+Space Z` or choose "Undo Layout Change" from the Command Palette (`Ctrl+Space :`).
 
 ### 5. Tab Tray and quick switcher
 
@@ -216,8 +216,8 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 
 ### 8. Token usage tracking and cost estimation
 
-- **What it is:** Read-only log parsers and a local SQLite database that record token counts and estimate costs.
-- **What it does:** Tails session transcripts incrementally without altering source files. Aggregates prompt tokens, completion tokens, and cache reads into persistent totals.
+- **What it is:** Read-only log parsers that record token counts in an in-memory SQLite database and estimate costs.
+- **What it does:** Re-scans changed session transcripts in the background (every 30 seconds) without altering source files. Aggregates prompt tokens, completion tokens, and cache reads/writes into totals for today (local time) and the last 5 hours.
   - *Claude Code:* Reads JSONL transcripts under `~/.claude/projects/`.
   - *Codex CLI:* Reads session logs under `~/.codex/sessions/`.
   - *Antigravity (agy):* Reads transcript logs under `~/.gemini/antigravity-cli/brain/*/transcript.jsonl`.
@@ -225,7 +225,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - Press `Ctrl+Space u` to open the **Usage Dashboard**.
   - Inspect totals for today, rolling 5-hour windows, and overall events.
   - View live token summaries directly in the bottom status line.
-  - Configure pricing models in `pricing.toml` to customize per-million token rates.
+  - Costs are estimates based on built-in per-million token rates for each model family (Claude Opus/Sonnet/Haiku, GPT-5/4o, Gemini).
 
 ### 9. Git worktree orchestration and diff viewer
 
@@ -283,19 +283,19 @@ TAG follows the rule: **discoverable by default, fast once learned.**
 
 - **What it is:** Native pane implementations that prove the `Pane` trait decouples the multiplexer from OS processes.
 - **What it does:**
-  - *Peer Chat:* An in-terminal messaging room.
+  - *Peer Chat:* A local scratch chat pane (messages stay in the pane; nothing is sent over the network).
   - *Texas Hold'em:* A terminal poker mini-game with chip tracking, community cards, and betting rounds.
 - **How to use it:**
-  - Launchable via the Command Palette (`Ctrl+Space p`) or programmatically via the pane registry.
+  - Launchable via the Command Palette (`Ctrl+Space :`) or programmatically via the pane registry.
 
 ### 13. Passthrough mode
 
 - **What it is:** A raw keyboard bypass mode.
 - **What it does:** Forwards all key events directly to the child process without interception, allowing you to use nested tmux, vim, nano, or htop sessions without shortcut collisions.
 - **How to use it:**
-  - Press `Ctrl+Space Esc` to toggle passthrough mode.
+  - Press `Ctrl+Space t` to toggle passthrough mode.
   - The status bar displays `[PASSTHROUGH]` in bold red.
-  - Press `Ctrl+Space Esc` again to return to normal mode.
+  - The leader key still works in passthrough; press `Ctrl+Space t` again to return to normal mode, or `Ctrl+Space Ctrl+Space` to send a literal `Ctrl+Space` to the pane.
 
 ### 14. Theming and visual polish
 
@@ -314,7 +314,7 @@ TAG follows the rule: **discoverable by default, fast once learned.**
   - Distinguishes release channels: users on stable builds only receive notifications for newer stable releases, while users on beta builds receive notifications for newer betas and stable releases.
   - When an update is detected, TAG displays a prominent `[▲ v0.2.0]` badge on the status bar and pops an update toast notification.
 - **How to use it:**
-  - **In-App:** Press `Ctrl+Space U` or run `system.update` in the Command Palette (`Ctrl+Space p`).
+  - **In-App:** Press `Ctrl+Space U` or run `system.update` in the Command Palette (`Ctrl+Space :`).
   - **From CLI:** Run `tag update` to upgrade to the latest stable release, or `tag update --beta` to upgrade to the latest beta preview.
 
 ---
@@ -326,14 +326,14 @@ Default leader key: `Ctrl+Space`
 | Category | Shortcut | Action | Description |
 |---|---|---|---|
 | **Discoverability** | `Ctrl+Space (pause)` | Which-Key | Displays available chords after 400ms pause |
-| | `Ctrl+Space p` | Command Palette | Fuzzy search and run any action |
+| | `Ctrl+Space :` / `Space` | Command Palette | Fuzzy search and run any action |
 | | `F1` or `Ctrl+Space ?` | Help Overlay | Scrollable guide and shortcut reference |
-| | `Ctrl+Space U` | Update TAG | Check for updates and run self-upgrade wizard |
-| | `Ctrl+Space Esc` | Passthrough Mode | Send all keystrokes directly to child app |
+| | `Ctrl+Space U` | Update TAG | Shows how to upgrade (run `tag update` in a shell) |
+| | `Ctrl+Space t` | Passthrough Mode | Send all keystrokes except the leader directly to child app |
 | **Clipboard & Selection** | `Mouse Drag & Release` | Select & Auto-Copy | Draws selection and immediately copies text via OSC 52 + desktop |
 | | `Ctrl+Shift+C` | Copy Selection | Copies highlighted text to clipboard (OSC 52 + local) |
 | | `Ctrl+C (with sel)` | Smart Copy | Copies selection when active; acts as SIGINT abort when no selection |
-| | `Ctrl+Space y` / `c` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
+| | `Ctrl+Space y` | Yank Selection | Leader shortcut to copy highlighted text to clipboard |
 | | `Ctrl+Space v` / `p` | Paste Clipboard | Leader shortcut to paste text from clipboard into focused pane |
 | | `Ctrl+Shift+V` / `Shift+Ins` | Paste Clipboard | Paste text from system clipboard into the focused pane |
 | | `Shift + Mouse Drag` | Terminal Selection | Bypasses in-app mouse capture for terminal emulator native selection |

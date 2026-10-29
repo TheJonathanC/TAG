@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use tag_core::theme::Theme;
@@ -44,7 +44,7 @@ pub fn render_attention_overlay(
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Attention Queue (Enter: jump to pane, Esc: close) ")
+        .title(" Attention Queue (Enter: jump to pane, x: dismiss, Esc: close) ")
         .borders(Borders::ALL)
         .border_style(theme.warning);
 
@@ -87,6 +87,8 @@ pub fn render_attention_overlay(
         list_items.push(ListItem::new(Line::from(spans)).style(row_style));
     }
 
+    // Stateful render keeps the selected alert scrolled into view
     let list = List::new(list_items);
-    frame.render_widget(list, inner);
+    let mut list_state = ListState::default().with_selected(Some(state.selected_index));
+    frame.render_stateful_widget(list, inner, &mut list_state);
 }

@@ -1,11 +1,11 @@
 [package]
 name = "tag"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Terminal Agent Orchestrator & Developer Multiplexer"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/TheJonathanC/TAG"
-homepage = "https://github.com/TheJonathanC/TAG"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 readme = "../../README.md"
 keywords = ["terminal", "multiplexer", "agent", "pty", "tui"]
 categories = ["command-line-utilities", "development-tools"]
@@ -48,3 +48,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 arboard = { workspace = true }
+libc = { workspace = true }

@@ -25,6 +25,8 @@ pub enum Action {
     FocusNext,
     FocusPrev,
     SwitchWorkspace(WorkspaceId),
+    /// Switch to the workspace at this 0-based position (as shown in the status bar)
+    SwitchWorkspaceIndex(usize),
     NextWorkspace,
     PrevWorkspace,
 
@@ -56,6 +58,8 @@ pub enum Action {
     // Modes & Toggles
     TogglePassthrough,
     ToggleDnd,
+    /// Send the leader key itself to the focused pane (Leader, Leader)
+    SendLeaderKey,
 
     // Agents & Creation
     SpawnShell,

@@ -11,6 +11,25 @@ set -euo pipefail
 REPO="TheJonathanC/TAG"
 CHANNEL="${CHANNEL:-stable}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+REQUIRE_CHECKSUM=1
+
+usage() {
+  echo "TAG Installer"
+  echo "Usage: install.sh [options]"
+  echo "  --stable              Install latest stable release (default)"
+  echo "  --beta                Install latest beta/pre-release"
+  echo "  --version <v>         Install specific version tag (e.g. v0.1.0)"
+  echo "  --dir <path>          Installation directory (default: ~/.local/bin)"
+  echo "  --skip-checksum       Install even if the SHA-256 checksum cannot be verified"
+}
+
+require_value() {
+  if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+    echo "Error: $1 requires a value." >&2
+    usage >&2
+    exit 1
+  fi
+}
 
 # Parse optional command line arguments
 while [[ $# -gt 0 ]]; do
@@ -24,24 +43,27 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --version)
+      require_value "$@"
       TAG_VERSION="$2"
       shift 2
       ;;
     --dir)
+      require_value "$@"
       INSTALL_DIR="$2"
       shift 2
       ;;
+    --skip-checksum)
+      REQUIRE_CHECKSUM=0
+      shift
+      ;;
     -h|--help)
-      echo "TAG Installer"
-      echo "Usage: install.sh [options]"
-      echo "  --stable       Install latest stable release (default)"
-      echo "  --beta         Install latest beta/pre-release"
-      echo "  --version <v>  Install specific version tag (e.g. v0.1.0)"
-      echo "  --dir <path>   Installation directory (default: ~/.local/bin)"
+      usage
       exit 0
       ;;
     *)
-      shift
+      echo "Error: Unknown option: $1" >&2
+      usage >&2
+      exit 1
       ;;
   esac
 done
@@ -134,14 +156,26 @@ if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME"; then
     ARCHIVE_NAME="tag-${VERSION}-${TARGET}.tar.gz"
     DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE_NAME}"
     CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE_NAME}.sha256"
-    curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME"
+    if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME"; then
+      echo "Error: Failed to download release archive from $DOWNLOAD_URL" >&2
+      exit 1
+    fi
   else
     echo "Error: Failed to download release archive from $DOWNLOAD_URL" >&2
     exit 1
   fi
 fi
 
-# Verify checksum if sha256 file exists
+# Verify checksum (required unless --skip-checksum is given)
+checksum_unverified() {
+  if [ "$REQUIRE_CHECKSUM" -eq 1 ]; then
+    echo "Error: $1" >&2
+    echo "Refusing to install an unverified archive. Re-run with --skip-checksum to override." >&2
+    exit 1
+  fi
+  echo "Warning: $1 Continuing without checksum verification (--skip-checksum)." >&2
+}
+
 if curl -fsSL "$CHECKSUM_URL" -o "$TMP_DIR/${ARCHIVE_NAME}.sha256" 2>/dev/null; then
   echo "==> Verifying SHA-256 checksum..."
   EXPECTED_HASH="$(awk '{print $1}' "$TMP_DIR/${ARCHIVE_NAME}.sha256")"
@@ -161,7 +195,11 @@ if curl -fsSL "$CHECKSUM_URL" -o "$TMP_DIR/${ARCHIVE_NAME}.sha256" 2>/dev/null; 
       exit 1
     fi
     echo "    Checksum OK."
+  else
+    checksum_unverified "No sha256sum or shasum tool found to verify the download."
   fi
+else
+  checksum_unverified "Could not download checksum file $CHECKSUM_URL."
 fi
 
 echo "==> Extracting binaries..."
@@ -173,8 +211,10 @@ mkdir -p "$INSTALL_DIR"
 for bin in tag cockpit-notify tag-notify; do
   if [ -f "$TMP_DIR/extracted/$bin" ]; then
     echo "    Installing $bin -> $INSTALL_DIR/$bin"
-    cp -f "$TMP_DIR/extracted/$bin" "$INSTALL_DIR/$bin"
-    chmod +x "$INSTALL_DIR/$bin"
+    # Copy next to the target then rename, so a running binary is replaced atomically
+    cp -f "$TMP_DIR/extracted/$bin" "$INSTALL_DIR/.$bin.new"
+    chmod +x "$INSTALL_DIR/.$bin.new"
+    mv -f "$INSTALL_DIR/.$bin.new" "$INSTALL_DIR/$bin"
   fi
 done
 

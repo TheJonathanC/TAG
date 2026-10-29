@@ -6,7 +6,13 @@ use ratatui::Frame;
 
 use tag_core::theme::Theme;
 
-pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme, minimized_count: usize) {
+pub fn render_empty_state(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    minimized_count: usize,
+    version: &str,
+) {
     if area.width < 10 || area.height < 5 {
         return;
     }
@@ -59,7 +65,7 @@ pub fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme, minimize
                 theme.title_focused.add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  v{}", env!("CARGO_PKG_VERSION")),
+                format!("  v{}", version),
                 theme.text.add_modifier(Modifier::DIM),
             ),
             Span::styled(" //", theme.accent),

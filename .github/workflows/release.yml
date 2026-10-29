@@ -51,13 +51,25 @@ jobs:
             TAG="${{ github.ref_name }}"
           fi
 
-          # Determine if beta / prerelease
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CHANNEL="${{ github.event.inputs.channel }}"
-          elif [[ "$TAG" == *"-beta"* || "$TAG" == *"-alpha"* || "$TAG" == *"-rc"* ]]; then
+          # Determine if beta / prerelease from the tag itself (any "-suffix" is a prerelease)
+          if [[ "$TAG" == *-* ]]; then
             CHANNEL="beta"
           else
             CHANNEL="stable"
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.channel }}" != "$CHANNEL" ]; then
+            echo "::error::Requested channel '${{ github.event.inputs.channel }}' does not match tag '$TAG' (resolved channel: $CHANNEL)."
+            exit 1
+          fi
+
+          # Stable releases must match the version committed in Cargo.toml (also required for crates.io)
+          if [ "$CHANNEL" = "stable" ]; then
+            CARGO_VER=$(cargo metadata --no-deps --format-version 1 | grep -o '"name":"tag","version":"[^"]*"' | head -n 1 | cut -d'"' -f6)
+            if [ "v${CARGO_VER}" != "$TAG" ]; then
+              echo "::error::Stable tag '$TAG' does not match crates/bin/Cargo.toml version 'v${CARGO_VER}'."
+              exit 1
+            fi
           fi
 
           if [ "$CHANNEL" = "beta" ]; then
@@ -120,6 +132,16 @@ jobs:
       - name: Install Cross (for cross-compilation)
         if: matrix.use_cross
         uses: taiki-e/install-action@cross
+
+      - name: Stamp Release Version
+        shell: bash
+        run: |
+          # Embed the release tag's version (e.g. 0.2.0-beta.1) so `tag --version`
+          # and the in-app update check report the version that was actually released.
+          VERSION="${{ needs.determine-release.outputs.version }}"
+          SEMVER="${VERSION#v}"
+          perl -0pi -e 's/^version = "[^"]*"/version = "'"$SEMVER"'"/m' crates/bin/Cargo.toml
+          grep -m1 '^version = ' crates/bin/Cargo.toml
 
       - name: Build Release Binaries
         run: |

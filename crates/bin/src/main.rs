@@ -21,7 +21,7 @@ use tag_clipboard::{
     copy_to_clipboard, get_clipboard_text, set_internal_clipboard, wrap_bracketed_paste,
     ImageBridge, SnippetBank, SnippetOverlayState,
 };
-use tag_core::action::{Action, Direction, SplitDirection};
+use tag_core::action::{Action, SplitDirection};
 use tag_core::command::CommandRegistry;
 use tag_core::config::Config;
 use tag_core::event::{AppEvent, HookEvent};
@@ -35,15 +35,13 @@ use tag_notify::{
 };
 use tag_pty::PtyPane;
 use tag_ui::{
-    get_matched_commands, get_selected_command, hit_test_status_bar, render_command_palette,
-    render_empty_state, render_help_overlay, render_rename_modal, render_status_bar,
-    render_tab_tray, render_toasts, render_tour, render_which_key, PaletteState, RenameModalState,
+    filter_tray_items, get_matched_commands, get_selected_command, hit_test_palette,
+    hit_test_status_bar, render_command_palette, render_empty_state, render_help_overlay,
+    render_rename_modal, render_status_bar, render_tab_tray, render_toasts, render_tour,
+    render_which_key, tray_item_at_row, PaletteClick, PaletteState, RenameModalState,
     StatusBarClickTarget, StatusBarProps, TabTrayState, Toast, ToastLevel, TourState, TrayItem,
 };
-use tag_usage::{
-    render_usage_overlay, AgyProvider, ClaudeCodeProvider, CodexProvider, UsageOverlayState,
-    UsageStore,
-};
+use tag_usage::{render_usage_overlay, UsageOverlayState, UsageStore};
 use tag_vault::{render_vault_overlay, VaultMode, VaultOverlayState, VaultStore};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tracing::{info, Level};
@@ -72,10 +70,18 @@ fn is_tmux_server_running() -> bool {
     run_tmux_silent(&["has-session"])
 }
 
+fn inside_tmux() -> bool {
+    std::env::var_os("TMUX").is_some_and(|v| !v.is_empty())
+}
+
 fn attach_to_session(name: &str) -> Result<(), anyhow::Error> {
-    let status = std::process::Command::new("tmux")
-        .args(["attach-session", "-t", name])
-        .status()?;
+    // Inside an existing tmux client, attaching would nest; switch that client instead
+    let args = if inside_tmux() {
+        ["switch-client", "-t", name]
+    } else {
+        ["attach-session", "-t", name]
+    };
+    let status = std::process::Command::new("tmux").args(args).status()?;
     if !status.success() {
         return Err(anyhow::anyhow!(
             "Failed to attach to tmux session '{}'",
@@ -101,39 +107,49 @@ fn start_and_attach_background_session() -> Result<(), anyhow::Error> {
         return Err(anyhow::anyhow!("Failed to start background TAG session."));
     }
     let res = attach_to_session(TAG_SESSION_NAME);
-    println!(
-        "\n[TAG detached. Run 'tag' or 'tag attach' to re-attach. Run 'tag kill' to terminate.]"
-    );
+    if !inside_tmux() {
+        println!(
+            "\n[TAG detached. Run 'tag' or 'tag attach' to re-attach. Run 'tag kill' to terminate.]"
+        );
+    }
     res
 }
 
-fn load_app_config() -> Config {
-    let config_path = dirs_or_home()
+fn config_path() -> PathBuf {
+    dirs_or_home()
         .join(".config")
         .join("tag")
-        .join("config.toml");
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        if let Ok(cfg) = Config::load_from_str(&content) {
-            return cfg;
-        }
-    }
-    Config::default()
+        .join("config.toml")
 }
 
-fn save_app_config(config: &Config) {
-    let config_path = dirs_or_home()
-        .join(".config")
-        .join("tag")
-        .join("config.toml");
-    if let Some(parent) = config_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+/// Load the config file. On a parse error the defaults are used and the error is
+/// returned alongside so it can be shown (and the broken file is never overwritten).
+fn load_app_config() -> (Config, Option<String>) {
+    let path = config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match Config::load_from_str(&content) {
+            Ok(cfg) => (cfg, None),
+            Err(e) => (
+                Config::default(),
+                Some(format!("{}: {}", path.display(), e)),
+            ),
+        },
+        Err(_) => (Config::default(), None),
     }
-    if let Ok(toml_str) = config.to_toml_string() {
-        let _ = std::fs::write(&config_path, toml_str);
+}
+
+fn save_app_config(config: &Config) -> Result<(), anyhow::Error> {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
+    std::fs::write(&path, config.to_toml_string()?)?;
+    Ok(())
 }
 
 fn refresh_tmux_commands(registry: &mut CommandRegistry) {
+    // Rebuild the dynamic entries so closed sessions disappear and none are duplicated
+    registry.remove_by_id_prefix("agents.attach_tmux_");
     if let Ok(output) = std::process::Command::new("tmux")
         .args([
             "list-panes",
@@ -318,6 +334,14 @@ struct CachedGitData {
     loaded_at: std::time::Instant,
 }
 
+/// The version this binary was released as (stamped from the release tag).
+const TAG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// How often transcripts are re-scanned for token usage in the background.
+const USAGE_SCAN_INTERVAL: Duration = Duration::from_secs(30);
+/// Window in which a second `q` / Ctrl+C on an empty workspace confirms quitting.
+const QUIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
+
 struct AppState {
     panes: HashMap<PaneId, Box<dyn Pane>>,
     next_pane_id: u32,
@@ -344,7 +368,6 @@ struct AppState {
     snippets: SnippetBank,
     vault: VaultStore,
     git_backend: StandardGitBackend,
-    notifier: SystemNotifier,
     event_tx: UnboundedSender<AppEvent>,
     is_dirty: bool,
     needs_clear: bool,
@@ -357,6 +380,17 @@ struct AppState {
     last_notification_time: Option<std::time::Instant>,
     selecting_pane: Option<(PaneId, Rect, (u16, u16))>,
     available_update: Option<String>,
+    /// Error from parsing config.toml (defaults in use; file must not be overwritten)
+    config_error: Option<String>,
+    /// First `q`/Ctrl+C press on an empty workspace while other panes still run
+    quit_confirm_at: Option<std::time::Instant>,
+    /// Token usage events parsed by the background transcript scanner
+    usage_rx: std::sync::mpsc::Receiver<Vec<tag_usage::UsageEvent>>,
+    /// Git overlay data computed off the UI thread, tagged with a request generation
+    git_tx: std::sync::mpsc::Sender<(u64, CachedGitData)>,
+    git_rx: std::sync::mpsc::Receiver<(u64, CachedGitData)>,
+    git_generation: u64,
+    git_loading: bool,
 }
 
 impl AppState {
@@ -387,8 +421,7 @@ impl AppState {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
 
     if let Some(Commands::SetupHooks { agent }) = cli.command {
@@ -454,7 +487,13 @@ async fn main() -> Result<(), anyhow::Error> {
         std::process::exit(1);
     }
 
-    let config = load_app_config();
+    let (config, config_error) = load_app_config();
+    if let Some(ref err) = config_error {
+        eprintln!(
+            "Warning: ignoring invalid TAG config ({}). Using defaults.",
+            err
+        );
+    }
 
     if let Some(Commands::Attach) = cli.command {
         if is_session_running(TAG_SESSION_NAME) {
@@ -474,8 +513,11 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    // Running in foreground: mark TAG_ACTIVE so child shells detect they are inside TAG
+    // Running in foreground: mark TAG_ACTIVE so child shells detect they are inside TAG.
+    // Environment changes happen here, before the async runtime starts any threads.
     std::env::set_var("TAG_ACTIVE", "1");
+    let socket_path = get_tag_socket_path();
+    std::env::set_var("COCKPIT_SOCK", &socket_path);
 
     // Set up file logger (tracing to private file, NEVER stdout/stderr)
     let log_dir = dirs_or_home().join(".config").join("tag").join("logs");
@@ -509,7 +551,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let run_res = run_app(&mut terminal).await;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let run_res = runtime.block_on(run_app(&mut terminal, socket_path, config_error));
 
     // Restore terminal cleanly
     let _ = disable_raw_mode();
@@ -607,9 +652,16 @@ fn handle_paste_image(file: Option<PathBuf>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn prompt_passphrase(cli_pass: Option<String>) -> Result<String, anyhow::Error> {
+fn prompt_passphrase(
+    cli_pass: Option<String>,
+    vault_path: &std::path::Path,
+) -> Result<String, anyhow::Error> {
     if let Some(p) = cli_pass {
         if !p.is_empty() {
+            eprintln!(
+                "Warning: --passphrase is visible in shell history and the process list; \
+                 prefer the interactive prompt or TAG_VAULT_PASSWORD."
+            );
             return Ok(p);
         }
     }
@@ -618,7 +670,25 @@ fn prompt_passphrase(cli_pass: Option<String>) -> Result<String, anyhow::Error> 
             return Ok(p);
         }
     }
-    read_password_terminal("Enter TAG Vault master passphrase: ")
+    if vault_path.exists() {
+        return read_password_terminal("Enter TAG Vault master passphrase: ");
+    }
+    // Creating a new vault: confirm so a typo can't lock the user out
+    println!(
+        "No vault found at {}; creating a new one.",
+        vault_path.display()
+    );
+    let first = read_password_terminal("Choose a TAG Vault master passphrase: ")?;
+    if first.is_empty() {
+        return Err(anyhow::anyhow!("Passphrase cannot be empty"));
+    }
+    let second = read_password_terminal("Confirm master passphrase: ")?;
+    if first != second {
+        return Err(anyhow::anyhow!(
+            "Passphrases do not match; vault not created"
+        ));
+    }
+    Ok(first)
 }
 
 fn read_password_terminal(prompt: &str) -> Result<String, anyhow::Error> {
@@ -630,11 +700,25 @@ fn read_password_terminal(prompt: &str) -> Result<String, anyhow::Error> {
     let mut input = String::new();
     loop {
         if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+            if key.kind != crossterm::event::KeyEventKind::Press {
+                continue;
+            }
             match key.code {
                 crossterm::event::KeyCode::Enter => break,
                 crossterm::event::KeyCode::Backspace => {
                     input.pop();
                 }
+                crossterm::event::KeyCode::Char('c' | 'd')
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    println!();
+                    return Err(anyhow::anyhow!("Operation cancelled"));
+                }
+                crossterm::event::KeyCode::Char(_)
+                    if key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {}
                 crossterm::event::KeyCode::Char(c) => {
                     input.push(c);
                 }
@@ -666,7 +750,7 @@ fn handle_vault_command(cmd: VaultCommands) -> Result<(), anyhow::Error> {
         } => {
             let path = vault_file.unwrap_or(default_vault_path);
             let mut vault = VaultStore::new(path.clone(), 60);
-            let pass = prompt_passphrase(passphrase)?;
+            let pass = prompt_passphrase(passphrase, &path)?;
             vault.unlock(&pass)?;
 
             let val = match value {
@@ -696,8 +780,14 @@ fn handle_vault_command(cmd: VaultCommands) -> Result<(), anyhow::Error> {
             vault_file,
         } => {
             let path = vault_file.unwrap_or(default_vault_path);
+            if !path.exists() {
+                return Err(anyhow::anyhow!(
+                    "No TAG vault found at {}. Run 'tag vault set <KEY>' to create one.",
+                    path.display()
+                ));
+            }
             let mut vault = VaultStore::new(path.clone(), 60);
-            let pass = prompt_passphrase(passphrase)?;
+            let pass = prompt_passphrase(passphrase, &path)?;
             vault.unlock(&pass)?;
             let keys = vault.list_keys();
             if keys.is_empty() {
@@ -723,8 +813,14 @@ fn handle_vault_command(cmd: VaultCommands) -> Result<(), anyhow::Error> {
             vault_file,
         } => {
             let path = vault_file.unwrap_or(default_vault_path);
-            let mut vault = VaultStore::new(path, 60);
-            let pass = prompt_passphrase(passphrase)?;
+            if !path.exists() {
+                return Err(anyhow::anyhow!(
+                    "No TAG vault found at {}. Run 'tag vault set <KEY>' to create one.",
+                    path.display()
+                ));
+            }
+            let mut vault = VaultStore::new(path.clone(), 60);
+            let pass = prompt_passphrase(passphrase, &path)?;
             vault.unlock(&pass)?;
             if let Some(sec) = vault.get_secret_value(&key) {
                 println!("{}", sec);
@@ -739,8 +835,14 @@ fn handle_vault_command(cmd: VaultCommands) -> Result<(), anyhow::Error> {
             vault_file,
         } => {
             let path = vault_file.unwrap_or(default_vault_path);
+            if !path.exists() {
+                return Err(anyhow::anyhow!(
+                    "No TAG vault found at {}. Run 'tag vault set <KEY>' to create one.",
+                    path.display()
+                ));
+            }
             let mut vault = VaultStore::new(path.clone(), 60);
-            let pass = prompt_passphrase(passphrase)?;
+            let pass = prompt_passphrase(passphrase, &path)?;
             vault.unlock(&pass)?;
             if vault.delete_secret(&key) {
                 vault.save_current()?;
@@ -758,35 +860,76 @@ fn handle_vault_command(cmd: VaultCommands) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn get_tag_socket_dir() -> PathBuf {
-    let dir = if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(runtime_dir).join("tag")
-    } else {
-        dirs_or_home().join(".config").join("tag").join("run")
-    };
+/// Unix socket paths are limited to ~104-108 bytes; keep a safety margin.
+const MAX_SOCKET_PATH_LEN: usize = 100;
 
-    let _ = std::fs::create_dir_all(&dir);
+fn ensure_private_dir(dir: &std::path::Path) {
+    let _ = std::fs::create_dir_all(dir);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
-    dir
+}
+
+fn preferred_socket_dir() -> PathBuf {
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        PathBuf::from(runtime_dir).join("tag")
+    } else {
+        dirs_or_home().join(".config").join("tag").join("run")
+    }
+}
+
+/// Short per-user fallback under /tmp, used only when the preferred path is too long
+/// for a Unix socket. Rejected unless it is a real directory owned by us and private.
+fn short_socket_dir() -> Option<PathBuf> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let dir = PathBuf::from(format!("/tmp/tag-{}", uid));
+    let _ = std::fs::create_dir(&dir);
+    let meta = std::fs::symlink_metadata(&dir).ok()?;
+    if !meta.is_dir() || meta.uid() != uid {
+        return None;
+    }
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    Some(dir)
+}
+
+fn socket_file_name() -> String {
+    format!("tag-sock-{}.sock", std::process::id())
 }
 
 fn get_tag_socket_path() -> PathBuf {
-    get_tag_socket_dir().join(format!("tag-sock-{}.sock", std::process::id()))
+    let dir = preferred_socket_dir();
+    let path = dir.join(socket_file_name());
+    if path.as_os_str().len() <= MAX_SOCKET_PATH_LEN {
+        ensure_private_dir(&dir);
+        return path;
+    }
+    match short_socket_dir() {
+        Some(short) => short.join(socket_file_name()),
+        None => {
+            ensure_private_dir(&dir);
+            path
+        }
+    }
 }
 
 fn find_latest_tag_socket() -> Option<PathBuf> {
     let mut best_sock = None;
     let mut best_time = std::time::SystemTime::UNIX_EPOCH;
 
-    let candidate_dirs = [
-        get_tag_socket_dir(),
+    // Only private, per-user locations (never scan the shared temp dir)
+    let mut candidate_dirs = vec![
+        preferred_socket_dir(),
         dirs_or_home().join(".config").join("tag").join("run"),
-        std::env::temp_dir(),
     ];
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let short = PathBuf::from(format!("/tmp/tag-{}", unsafe { libc::getuid() }));
+    if short.exists() {
+        candidate_dirs.extend(short_socket_dir());
+    }
 
     for dir in candidate_dirs {
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -854,15 +997,14 @@ fn is_inside_tag() -> bool {
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    socket_path: PathBuf,
+    config_error: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let (event_tx, mut event_rx) = unbounded_channel::<AppEvent>();
 
-    // Start private hook socket listener
-    let socket_path = get_tag_socket_path();
-    std::env::set_var("COCKPIT_SOCK", &socket_path);
-
+    // Start private hook socket listener (COCKPIT_SOCK was exported before the runtime started)
     let hook_server = HookServer::new(socket_path.clone());
-    let _ = hook_server.start(event_tx.clone()).await;
+    let hook_error = hook_server.start(event_tx.clone()).await.err();
 
     // Spawn crossterm event poller on dedicated thread with 50ms poll timeout & cancellation flag
     let is_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -923,7 +1065,7 @@ async fn run_app(
     });
 
     // Initialize state
-    let config = load_app_config();
+    let (config, _) = load_app_config();
     let theme = Theme::from_config(config.theme.clone());
     let command_registry = CommandRegistry::new();
     let key_state_machine = KeyStateMachine::from_config(&config, &command_registry);
@@ -936,6 +1078,23 @@ async fn run_app(
     let snippets = SnippetBank::load_from_file_or_default(&snippets_path);
     let vault_path = dirs_or_home().join(".config").join("tag").join("vault.enc");
     let vault = VaultStore::new(vault_path, config.vault_idle_timeout_mins);
+
+    // Background transcript scanner: re-parses only changed files and streams new events
+    let (usage_tx, usage_rx) = std::sync::mpsc::channel();
+    let scan_home = dirs_or_home();
+    let _ = std::thread::Builder::new()
+        .name("usage-scanner".into())
+        .spawn(move || {
+            let mut scanner = tag_usage::UsageScanner::new(scan_home);
+            loop {
+                let events = scanner.scan_changed();
+                if !events.is_empty() && usage_tx.send(events).is_err() {
+                    break;
+                }
+                std::thread::sleep(USAGE_SCAN_INTERVAL);
+            }
+        });
+    let (git_tx, git_rx) = std::sync::mpsc::channel();
 
     let mut state = AppState {
         panes: HashMap::new(),
@@ -963,7 +1122,6 @@ async fn run_app(
         snippets,
         vault,
         git_backend: StandardGitBackend,
-        notifier: SystemNotifier,
         event_tx: event_tx.clone(),
         is_dirty: true,
         needs_clear: false,
@@ -976,8 +1134,33 @@ async fn run_app(
         last_notification_time: None,
         selecting_pane: None,
         available_update: None,
+        config_error,
+        quit_confirm_at: None,
+        usage_rx,
+        git_tx,
+        git_rx,
+        git_generation: 0,
+        git_loading: false,
     };
     state.update_usage_summary();
+    if let Some(err) = state.config_error.clone() {
+        push_toast(
+            &mut state,
+            "Config Error",
+            format!("Using defaults; fix config.toml: {}", err),
+            ToastLevel::Error,
+            10,
+        );
+    }
+    if let Some(e) = hook_error {
+        push_toast(
+            &mut state,
+            "Agent Hooks Unavailable",
+            format!("Could not listen on {}: {}", socket_path.display(), e),
+            ToastLevel::Error,
+            10,
+        );
+    }
 
     let term_size = terminal.size()?;
     state.term_width = term_size.width;
@@ -999,6 +1182,15 @@ async fn run_app(
                     } else {
                         HashMap::new()
                     };
+                    if sp.kind == PaneKind::Applet {
+                        let name = sp.args.first().map(String::as_str).unwrap_or("");
+                        if let Some(mut applet) = make_applet(name, pid) {
+                            applet.set_title(sp.title);
+                            state.panes.insert(pid, applet);
+                        }
+                        continue;
+                    }
+
                     let mut cmd = sp.command;
                     let mut args = sp.args;
                     let mut title = sp.title;
@@ -1076,6 +1268,18 @@ async fn run_app(
                         saved.workspaces.into_iter().map(Into::into).collect();
                     state.layout_mgr =
                         LayoutManager::from_workspaces(workspaces, saved.active_workspace_id);
+                    // Drop layout slots for panes that failed to respawn
+                    let live: std::collections::HashSet<PaneId> =
+                        state.panes.keys().copied().collect();
+                    state.layout_mgr.retain_panes(&|p| live.contains(&p));
+                    // Panes not referenced by any workspace would be unreachable
+                    let placed: std::collections::HashSet<PaneId> = state
+                        .layout_mgr
+                        .workspaces()
+                        .iter()
+                        .flat_map(|w| w.all_panes().into_iter().chain(w.minimized_panes.clone()))
+                        .collect();
+                    state.panes.retain(|pid, _| placed.contains(pid));
                     state.next_pane_id = max_pid + 1;
                 }
             }
@@ -1089,9 +1293,6 @@ async fn run_app(
     })?;
     state.is_dirty = false;
 
-    // Initial log scan for active agents (batched SQLite transaction)
-    scan_known_agent_logs(&mut state);
-    state.update_usage_summary();
     state.is_dirty = true;
 
     // Background update check after app startup
@@ -1099,7 +1300,7 @@ async fn run_app(
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(2)).await;
         tokio::task::spawn_blocking(move || {
-            if let Some(newer) = update::check_for_github_update(env!("CARGO_PKG_VERSION")) {
+            if let Some(newer) = update::check_for_github_update(TAG_VERSION) {
                 let _ = update_tx.send(AppEvent::UpdateAvailable(newer));
             }
         });
@@ -1127,24 +1328,20 @@ async fn run_app(
         };
 
         let mut should_quit = handle_app_event(&mut state, event);
-        if should_quit {
-            save_session_to_disk(&state);
-            break;
-        }
 
         // Batch-drain all pending events in queue before redrawing
-        while let Ok(next_ev) = event_rx.try_recv() {
-            should_quit = handle_app_event(&mut state, next_ev);
-            if should_quit {
-                break;
+        while !should_quit {
+            match event_rx.try_recv() {
+                Ok(next_ev) => should_quit = handle_app_event(&mut state, next_ev),
+                Err(_) => break,
             }
         }
         if should_quit {
-            save_session_to_disk(&state);
             break;
         }
     }
 
+    // Persist the session exactly once on the way out
     save_session_to_disk(&state);
 
     // Cleanly kill child processes in all panes
@@ -1160,65 +1357,6 @@ async fn run_app(
     let _ = std::fs::remove_file(socket_path);
 
     Ok(())
-}
-
-fn scan_known_agent_logs(state: &mut AppState) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let home_path = PathBuf::from(&home);
-    let mut all_events = Vec::new();
-
-    // 1. Scan agy transcripts if present
-    let brain_dir = home_path.join(".gemini/antigravity-cli/brain");
-    if brain_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&brain_dir) {
-            for entry in entries.flatten() {
-                let conv_id = entry.file_name().to_string_lossy().to_string();
-                let transcript_path = entry.path().join(".system_generated/logs/transcript.jsonl");
-                if transcript_path.exists() {
-                    all_events.extend(AgyProvider::parse_file(&transcript_path, &conv_id));
-                }
-            }
-        }
-    }
-
-    // 2. Scan Claude Code transcripts if present (~/.claude/projects/<proj>/*.jsonl)
-    let claude_dir = home_path.join(".claude/projects");
-    if claude_dir.exists() {
-        if let Ok(projects) = std::fs::read_dir(&claude_dir) {
-            for proj in projects.flatten() {
-                if let Ok(files) = std::fs::read_dir(proj.path()) {
-                    for file in files.flatten() {
-                        let path = file.path();
-                        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                            all_events.extend(ClaudeCodeProvider::parse_file(&path));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Scan Codex sessions if present (~/.codex/sessions/**/*.jsonl)
-    let codex_dir = home_path.join(".codex/sessions");
-    if codex_dir.exists() {
-        let mut stack = vec![codex_dir];
-        while let Some(dir) = stack.pop() {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        stack.push(path);
-                    } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                        all_events.extend(CodexProvider::parse_file(&path));
-                    }
-                }
-            }
-        }
-    }
-
-    if !all_events.is_empty() {
-        let _ = state.usage_store.insert_events_batch(&all_events);
-    }
 }
 
 fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
@@ -1260,7 +1398,7 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     let active_panes = state.layout_mgr.active_workspace().all_panes();
     if active_panes.is_empty() {
         let min_count = state.layout_mgr.active_workspace().minimized_panes.len();
-        render_empty_state(frame, content_area, &state.theme, min_count);
+        render_empty_state(frame, content_area, &state.theme, min_count, TAG_VERSION);
     } else {
         let rects = state.layout_mgr.compute_rects(content_area);
         let focused_id = state.layout_mgr.active_workspace().focused_pane;
@@ -1278,7 +1416,13 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     // 2. Render Tab Tray if open
     if let Some(t_area) = tray_area {
         let tray_items = build_tray_items(state);
-        render_tab_tray(frame, t_area, &tray_items, &state.tab_tray, &state.theme);
+        render_tab_tray(
+            frame,
+            t_area,
+            &tray_items,
+            &mut state.tab_tray,
+            &state.theme,
+        );
     }
 
     // 3. Render Status Bar
@@ -1292,7 +1436,7 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             attention_count: state.attention_queue.count(),
             token_usage_summary: state.cached_usage_summary.as_deref(),
             theme: &state.theme,
-            version: env!("CARGO_PKG_VERSION"),
+            version: TAG_VERSION,
             available_update: state.available_update.as_deref(),
         },
     );
@@ -1317,7 +1461,8 @@ fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             frame,
             size,
             state.key_state_machine.keymap(),
-            state.help_scroll,
+            &mut state.help_scroll,
+            TAG_VERSION,
             &state.theme,
         );
     }
@@ -1427,6 +1572,8 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                 ws.remove_pane(pane_id);
             }
             state.panes.remove(&pane_id);
+            state.attention_queue.clear_by_pane(pane_id);
+            state.needs_clear = true;
             false
         }
         AppEvent::AgentHook(payload) => {
@@ -1437,8 +1584,12 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     .or(state.layout_mgr.active_workspace().focused_pane);
                 if let Some(pid) = target_pid {
                     if let Some(pane) = state.panes.get_mut(&pid) {
-                        let wrapped = wrap_bracketed_paste(&payload.message);
-                        pane.send_input(&wrapped);
+                        let bytes = if pane.bracketed_paste() {
+                            wrap_bracketed_paste(&payload.message)
+                        } else {
+                            payload.message.as_bytes().to_vec()
+                        };
+                        pane.send_input(&bytes);
                     }
                 }
                 let filename = std::path::Path::new(&payload.message)
@@ -1493,9 +1644,12 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             if !state.dnd_active && state.config.notifications.enabled && focus_ok && debounce_ok {
                 state.last_notification_time = Some(std::time::Instant::now());
                 if state.config.notifications.desktop_notifications {
-                    state
-                        .notifier
-                        .notify(&format!("TAG - {}", payload.agent), &payload.message);
+                    // D-Bus/notification daemons can block for a long time; never on the UI thread
+                    let summary = format!("TAG - {}", payload.agent);
+                    let body = payload.message.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("desktop-notify".into())
+                        .spawn(move || SystemNotifier.notify(&summary, &body));
                 }
                 if state.config.notifications.sound {
                     use std::io::Write;
@@ -1541,10 +1695,11 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     KeyCode::Backspace => {
                         rename.input.pop();
                     }
-                    KeyCode::Char(c) => {
-                        rename.input.push(c);
+                    _ => {
+                        if let Some(c) = text_input_char(&key) {
+                            rename.input.push(c);
+                        }
                     }
-                    _ => {}
                 }
                 return false;
             }
@@ -1598,12 +1753,13 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                         state.palette.selected_index = 0;
                         state.palette.scroll_offset = 0;
                     }
-                    KeyCode::Char(c) => {
-                        state.palette.query.push(c);
-                        state.palette.selected_index = 0;
-                        state.palette.scroll_offset = 0;
+                    _ => {
+                        if let Some(c) = text_input_char(&key) {
+                            state.palette.query.push(c);
+                            state.palette.selected_index = 0;
+                            state.palette.scroll_offset = 0;
+                        }
                     }
-                    _ => {}
                 }
                 return false;
             }
@@ -1655,20 +1811,55 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                             state.attention_state.selected_index.saturating_sub(1);
                     }
                     KeyCode::Down => {
-                        state.attention_state.selected_index += 1;
+                        let count = state.attention_queue.count();
+                        if count > 0 {
+                            state.attention_state.selected_index =
+                                (state.attention_state.selected_index + 1).min(count - 1);
+                        }
                     }
                     KeyCode::Enter => {
-                        if let Some(item) = state
+                        let item = state
                             .attention_queue
                             .items()
                             .get(state.attention_state.selected_index)
-                        {
-                            if let Some(pid) = item.pane_id {
-                                state.layout_mgr.active_workspace_mut().focused_pane = Some(pid);
-                                state.attention_queue.clear_by_pane(pid);
+                            .cloned();
+                        if let Some(item) = item {
+                            match item.pane_id {
+                                Some(pid) => {
+                                    if !focus_pane_anywhere(state, pid) {
+                                        push_toast(
+                                            state,
+                                            "Attention Queue",
+                                            "That pane no longer exists.",
+                                            ToastLevel::Warning,
+                                            3,
+                                        );
+                                    }
+                                    state.attention_queue.clear_by_pane(pid);
+                                }
+                                None => {
+                                    state.attention_queue.clear_item(item.id);
+                                }
                             }
                         }
+                        state.attention_state.selected_index = 0;
                         state.attention_state.is_open = false;
+                    }
+                    KeyCode::Char('x') | KeyCode::Char('d') | KeyCode::Delete => {
+                        // Dismiss the selected alert without jumping to it
+                        let id = state
+                            .attention_queue
+                            .items()
+                            .get(state.attention_state.selected_index)
+                            .map(|i| i.id);
+                        if let Some(id) = id {
+                            state.attention_queue.clear_item(id);
+                        }
+                        let count = state.attention_queue.count();
+                        state.attention_state.selected_index = state
+                            .attention_state
+                            .selected_index
+                            .min(count.saturating_sub(1));
                     }
                     _ => {}
                 }
@@ -1683,386 +1874,31 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             }
 
             if state.git_state.is_open {
-                // If a modal prompt is open within the git overlay
-                if let Some(ref mut prompt) = state.git_state.prompt {
-                    match prompt.mode.clone() {
-                        GitPromptMode::CreateWorktree => {
-                            match key.code {
-                                KeyCode::Esc => {
-                                    state.git_state.prompt = None;
-                                }
-                                KeyCode::Backspace => {
-                                    prompt.input.pop();
-                                }
-                                KeyCode::Char(c) => {
-                                    prompt.input.push(c);
-                                }
-                                KeyCode::Enter => {
-                                    let name = prompt.input.trim().to_string();
-                                    state.git_state.prompt = None;
-                                    if !name.is_empty() {
-                                        let active_path = get_active_repo_path(state);
-                                        match state.git_backend.create_worktree(
-                                            &active_path,
-                                            &name,
-                                            &name,
-                                        ) {
-                                            Ok(wt_path) => {
-                                                state.git_state.is_open = false;
-                                                state.git_cache = None;
-                                                let new_id = state.allocate_pane_id();
-                                                let env = if state.vault.is_unlocked() {
-                                                    state.vault.get_env_set()
-                                                } else {
-                                                    HashMap::new()
-                                                };
-                                                let (w, h) = if state.term_width > 0
-                                                    && state.term_height > 0
-                                                {
-                                                    (
-                                                        state.term_width.saturating_sub(2),
-                                                        state.term_height.saturating_sub(4),
-                                                    )
-                                                } else {
-                                                    (80, 24)
-                                                };
-                                                if let Ok(new_pane) = PtyPane::spawn(
-                                                    new_id,
-                                                    format!("wt: {}", name),
-                                                    PaneKind::Shell,
-                                                    None,
-                                                    &[],
-                                                    &env,
-                                                    Some(wt_path),
-                                                    w,
-                                                    h,
-                                                    state.config.scrollback_lines,
-                                                    state.event_tx.clone(),
-                                                ) {
-                                                    state.panes.insert(new_id, Box::new(new_pane));
-                                                    let _ = state
-                                                        .layout_mgr
-                                                        .active_workspace_mut()
-                                                        .split_current(
-                                                            new_id,
-                                                            SplitDirection::Vertical,
-                                                        );
-                                                    state.toasts.push(Toast {
-                                                        title: "Worktree Created".into(),
-                                                        message: format!("Created worktree and opened shell in {}", name),
-                                                        level: ToastLevel::Success,
-                                                        created_at: chrono::Utc::now(),
-                                                        duration_secs: 3,
-                                                    });
-                                                }
-                                            }
-                                            Err(e) => {
-                                                state.toasts.push(Toast {
-                                                    title: "Worktree Creation Failed".into(),
-                                                    message: format!("{}", e),
-                                                    level: ToastLevel::Error,
-                                                    created_at: chrono::Utc::now(),
-                                                    duration_secs: 5,
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                            return false;
-                        }
-                        GitPromptMode::ConfirmMerge { branch, .. } => {
-                            match key.code {
-                                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                                    state.git_state.prompt = None;
-                                }
-                                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                    state.git_state.prompt = None;
-                                    let active_path = get_active_repo_path(state);
-                                    let main_path = state
-                                        .git_cache
-                                        .as_ref()
-                                        .and_then(|c| {
-                                            c.worktrees
-                                                .iter()
-                                                .find(|w| w.is_main)
-                                                .map(|w| w.path.clone())
-                                        })
-                                        .unwrap_or(active_path);
-
-                                    match state.git_backend.merge_branch(&main_path, &branch) {
-                                        Ok(msg) => {
-                                            refresh_git_cache(state);
-                                            state.is_dirty = true;
-                                            state.toasts.push(Toast {
-                                                title: "Worktree Merged".into(),
-                                                message: format!(
-                                                    "Branch '{}' merged into main: {}",
-                                                    branch, msg
-                                                ),
-                                                level: ToastLevel::Success,
-                                                created_at: chrono::Utc::now(),
-                                                duration_secs: 4,
-                                            });
-                                        }
-                                        Err(e) => {
-                                            refresh_git_cache(state);
-                                            state.is_dirty = true;
-                                            state.toasts.push(Toast {
-                                                title: "Merge Conflict / Error".into(),
-                                                message: format!("{}", e),
-                                                level: ToastLevel::Error,
-                                                created_at: chrono::Utc::now(),
-                                                duration_secs: 6,
-                                            });
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                            return false;
-                        }
-                        GitPromptMode::ConfirmDelete { worktree_name } => {
-                            match key.code {
-                                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                                    state.git_state.prompt = None;
-                                }
-                                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                    state.git_state.prompt = None;
-                                    let active_path = get_active_repo_path(state);
-                                    let main_path = state
-                                        .git_cache
-                                        .as_ref()
-                                        .and_then(|c| {
-                                            c.worktrees
-                                                .iter()
-                                                .find(|w| w.is_main)
-                                                .map(|w| w.path.clone())
-                                        })
-                                        .unwrap_or(active_path);
-
-                                    match state.git_backend.delete_worktree(
-                                        &main_path,
-                                        &worktree_name,
-                                        false,
-                                    ) {
-                                        Ok(_) => {
-                                            state.git_state.selected_index = 0;
-                                            refresh_git_cache(state);
-                                            state.is_dirty = true;
-                                            state.toasts.push(Toast {
-                                                title: "Worktree Removed".into(),
-                                                message: format!(
-                                                    "Worktree '{}' removed",
-                                                    worktree_name
-                                                ),
-                                                level: ToastLevel::Success,
-                                                created_at: chrono::Utc::now(),
-                                                duration_secs: 3,
-                                            });
-                                        }
-                                        Err(e) => {
-                                            state.toasts.push(Toast {
-                                                title: "Removal Failed".into(),
-                                                message: format!("{}", e),
-                                                level: ToastLevel::Error,
-                                                created_at: chrono::Utc::now(),
-                                                duration_secs: 5,
-                                            });
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                            return false;
-                        }
-                    }
-                }
-
-                // Normal git overlay navigation
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        state.git_state.is_open = false;
-                    }
-                    KeyCode::Tab => {
-                        state.git_state.selected_section =
-                            (state.git_state.selected_section + 1) % 3;
-                        state.git_state.selected_index = 0;
-                    }
-                    KeyCode::BackTab => {
-                        state.git_state.selected_section = if state.git_state.selected_section == 0
-                        {
-                            2
-                        } else {
-                            state.git_state.selected_section - 1
-                        };
-                        state.git_state.selected_index = 0;
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if state.git_state.selected_section == 2 {
-                            state.git_state.diff_scroll =
-                                state.git_state.diff_scroll.saturating_sub(1);
-                        } else {
-                            let old_idx = state.git_state.selected_index;
-                            state.git_state.selected_index = old_idx.saturating_sub(1);
-                            if state.git_state.selected_section == 0
-                                && state.git_state.selected_index != old_idx
-                            {
-                                refresh_git_cache(state);
-                                state.is_dirty = true;
-                            }
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if state.git_state.selected_section == 2 {
-                            state.git_state.diff_scroll =
-                                state.git_state.diff_scroll.saturating_add(1);
-                        } else {
-                            let max_idx = match state.git_state.selected_section {
-                                0 => state
-                                    .git_cache
-                                    .as_ref()
-                                    .map(|c| c.worktrees.len())
-                                    .unwrap_or(0),
-                                1 => state
-                                    .git_cache
-                                    .as_ref()
-                                    .map(|c| c.repo_status.changed_files.len())
-                                    .unwrap_or(0),
-                                _ => 0,
-                            };
-                            if max_idx > 0 && state.git_state.selected_index + 1 < max_idx {
-                                state.git_state.selected_index += 1;
-                                if state.git_state.selected_section == 0 {
-                                    refresh_git_cache(state);
-                                    state.is_dirty = true;
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Char('c') | KeyCode::Char('n') | KeyCode::Char('a') => {
-                        if state.git_state.selected_section == 0 {
-                            state.git_state.prompt = Some(GitPromptState {
-                                mode: GitPromptMode::CreateWorktree,
-                                input: String::new(),
-                            });
-                        }
-                    }
-                    KeyCode::Char('m') => {
-                        if state.git_state.selected_section == 0 {
-                            if let Some(ref cache) = state.git_cache {
-                                if let Some(wt) =
-                                    cache.worktrees.get(state.git_state.selected_index)
-                                {
-                                    if !wt.is_main {
-                                        if let Some(ref branch) = wt.branch {
-                                            state.git_state.prompt = Some(GitPromptState {
-                                                mode: GitPromptMode::ConfirmMerge {
-                                                    worktree_name: wt.name.clone(),
-                                                    branch: branch.clone(),
-                                                },
-                                                input: String::new(),
-                                            });
-                                        }
-                                    } else {
-                                        state.toasts.push(Toast {
-                                            title: "Cannot Merge Main".into(),
-                                            message: "Select a feature worktree to merge into main"
-                                                .into(),
-                                            level: ToastLevel::Warning,
-                                            created_at: chrono::Utc::now(),
-                                            duration_secs: 3,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Char('d') | KeyCode::Char('x') => {
-                        if state.git_state.selected_section == 0 {
-                            if let Some(ref cache) = state.git_cache {
-                                if let Some(wt) =
-                                    cache.worktrees.get(state.git_state.selected_index)
-                                {
-                                    if !wt.is_main {
-                                        state.git_state.prompt = Some(GitPromptState {
-                                            mode: GitPromptMode::ConfirmDelete {
-                                                worktree_name: wt.name.clone(),
-                                            },
-                                            input: String::new(),
-                                        });
-                                    } else {
-                                        state.toasts.push(Toast {
-                                            title: "Cannot Delete Main".into(),
-                                            message:
-                                                "Cannot remove the primary repository worktree"
-                                                    .into(),
-                                            level: ToastLevel::Warning,
-                                            created_at: chrono::Utc::now(),
-                                            duration_secs: 3,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Enter if state.git_state.selected_section == 0 => {
-                        if let Some(ref cache) = state.git_cache {
-                            if let Some(wt) = cache.worktrees.get(state.git_state.selected_index) {
-                                let wt_path = wt.path.clone();
-                                let wt_name = wt.name.clone();
-                                state.git_state.is_open = false;
-
-                                let new_id = state.allocate_pane_id();
-                                let env = if state.vault.is_unlocked() {
-                                    state.vault.get_env_set()
-                                } else {
-                                    HashMap::new()
-                                };
-                                let (w, h) = if state.term_width > 0 && state.term_height > 0 {
-                                    (
-                                        state.term_width.saturating_sub(2),
-                                        state.term_height.saturating_sub(4),
-                                    )
-                                } else {
-                                    (80, 24)
-                                };
-                                if let Ok(new_pane) = PtyPane::spawn(
-                                    new_id,
-                                    format!("wt: {}", wt_name),
-                                    PaneKind::Shell,
-                                    None,
-                                    &[],
-                                    &env,
-                                    Some(wt_path),
-                                    w,
-                                    h,
-                                    state.config.scrollback_lines,
-                                    state.event_tx.clone(),
-                                ) {
-                                    state.panes.insert(new_id, Box::new(new_pane));
-                                    let _ = state
-                                        .layout_mgr
-                                        .active_workspace_mut()
-                                        .split_current(new_id, SplitDirection::Vertical);
-                                    state.toasts.push(Toast {
-                                        title: "Worktree Opened".into(),
-                                        message: format!("Opened shell in {}", wt_name),
-                                        level: ToastLevel::Info,
-                                        created_at: chrono::Utc::now(),
-                                        duration_secs: 3,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                handle_git_overlay_key(state, key);
                 return false;
             }
 
             if state.snippet_state.is_open {
+                if let Some(ref mut fill) = state.snippet_state.fill {
+                    match key.code {
+                        KeyCode::Esc => state.snippet_state.fill = None,
+                        KeyCode::Backspace => {
+                            fill.input.pop();
+                        }
+                        KeyCode::Enter => {
+                            if let Some(text) = state.snippet_state.submit_fill_value() {
+                                state.snippet_state.is_open = false;
+                                paste_into_focused(state, &text);
+                            }
+                        }
+                        _ => {
+                            if let Some(c) = text_input_char(&key) {
+                                fill.input.push(c);
+                            }
+                        }
+                    }
+                    return false;
+                }
                 match key.code {
                     KeyCode::Esc => state.snippet_state.is_open = false,
                     KeyCode::Up => {
@@ -2077,20 +1913,16 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                         }
                     }
                     KeyCode::Enter => {
-                        if let Some(snip) = state
+                        let template = state
                             .snippets
                             .snippets
                             .get(state.snippet_state.selected_index)
-                        {
-                            let text = snip.template.clone();
-                            state.snippet_state.is_open = false;
-                            // Inject into focused pane via bracketed paste
-                            if let Some(focused) = state.layout_mgr.active_workspace().focused_pane
-                            {
-                                if let Some(pane) = state.panes.get_mut(&focused) {
-                                    let wrapped = wrap_bracketed_paste(&text);
-                                    pane.send_input(&wrapped);
-                                }
+                            .map(|snip| snip.template.clone());
+                        if let Some(template) = template {
+                            // Templates with {{placeholders}} prompt for values first
+                            if let Some(text) = state.snippet_state.begin_fill(&template) {
+                                state.snippet_state.is_open = false;
+                                paste_into_focused(state, &text);
                             }
                         }
                     }
@@ -2102,20 +1934,48 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             if state.vault_state.is_open {
                 // If not unlocked, handle passphrase input
                 if !state.vault.is_unlocked() {
+                    let creating = !state.vault.exists();
                     match key.code {
                         KeyCode::Esc => {
                             state.vault_state.clear_input();
-                            state.vault_state.is_open = false;
+                            if state.vault_state.pending_new_passphrase.is_some() {
+                                // Start over choosing the new passphrase
+                                state.vault_state.clear_pending_passphrase();
+                                state.vault_state.status_message = None;
+                            } else {
+                                state.vault_state.is_open = false;
+                            }
                         }
                         KeyCode::Backspace => {
                             state.vault_state.input_buffer.pop();
                         }
-                        KeyCode::Char(c) => {
-                            state.vault_state.input_buffer.push(c);
+                        KeyCode::Enter if creating && state.vault_state.input_buffer.is_empty() => {
+                            state.vault_state.status_message =
+                                Some("Passphrase cannot be empty".into());
+                        }
+                        KeyCode::Enter
+                            if creating && state.vault_state.pending_new_passphrase.is_none() =>
+                        {
+                            // New vault: ask for the passphrase twice before creating it
+                            state.vault_state.pending_new_passphrase =
+                                Some(std::mem::take(&mut state.vault_state.input_buffer));
+                            state.vault_state.status_message = None;
+                        }
+                        KeyCode::Enter
+                            if creating
+                                && state.vault_state.pending_new_passphrase.as_deref()
+                                    != Some(state.vault_state.input_buffer.as_str()) =>
+                        {
+                            state.vault_state.clear_input();
+                            state.vault_state.clear_pending_passphrase();
+                            state.vault_state.status_message = Some(
+                                "Passphrases did not match. Choose a passphrase again.".into(),
+                            );
                         }
                         KeyCode::Enter => {
                             let res = state.vault.unlock(&state.vault_state.input_buffer);
                             state.vault_state.clear_input();
+                            state.vault_state.clear_pending_passphrase();
                             match res {
                                 Ok(_) => {
                                     state.vault_state.mode = VaultMode::Viewing;
@@ -2128,7 +1988,11 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 }
                             }
                         }
-                        _ => {}
+                        _ => {
+                            if let Some(c) = text_input_char(&key) {
+                                state.vault_state.input_buffer.push(c);
+                            }
+                        }
                     }
                     return false;
                 }
@@ -2204,10 +2068,11 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                     Some("Key name cannot be empty".into());
                             }
                         }
-                        KeyCode::Char(c) => {
-                            state.vault_state.input_buffer.push(c);
+                        _ => {
+                            if let Some(c) = text_input_char(&key) {
+                                state.vault_state.input_buffer.push(c);
+                            }
                         }
-                        _ => {}
                     },
                     VaultMode::AddingValue => match key.code {
                         KeyCode::Esc => {
@@ -2238,10 +2103,11 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 }
                             }
                         }
-                        KeyCode::Char(c) => {
-                            state.vault_state.input_buffer.push(c);
+                        _ => {
+                            if let Some(c) = text_input_char(&key) {
+                                state.vault_state.input_buffer.push(c);
+                            }
                         }
-                        _ => {}
                     },
                 }
                 return false;
@@ -2249,7 +2115,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
 
             if state.tab_tray.is_open {
                 let tray_items = build_tray_items(state);
-                let filtered = get_filtered_tray_items(&tray_items, &state.tab_tray.search_query);
+                let filtered = filter_tray_items(&tray_items, &state.tab_tray.search_query);
                 let count = filtered.len();
 
                 if state.tab_tray.is_searching {
@@ -2276,11 +2142,12 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                             state.tab_tray.search_query.pop();
                             state.tab_tray.selected_index = 0;
                         }
-                        KeyCode::Char(c) => {
-                            state.tab_tray.search_query.push(c);
-                            state.tab_tray.selected_index = 0;
+                        _ => {
+                            if let Some(c) = text_input_char(&key) {
+                                state.tab_tray.search_query.push(c);
+                                state.tab_tray.selected_index = 0;
+                            }
                         }
-                        _ => {}
                     }
                     return false;
                 }
@@ -2304,17 +2171,9 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     }
                     KeyCode::Enter => {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
-                            let target_ws = item.workspace_id;
                             let target_pid = item.pane_id;
-                            let is_min = item.is_minimized;
                             state.tab_tray.is_open = false;
-                            state.layout_mgr.switch_workspace(target_ws);
-                            if is_min {
-                                if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws) {
-                                    ws.restore_pane(target_pid, None);
-                                }
-                            }
-                            state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+                            focus_pane_anywhere(state, target_pid);
                         }
                     }
                     KeyCode::Char('s') => {
@@ -2366,11 +2225,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     KeyCode::Char('x') => {
                         if let Some(item) = filtered.get(state.tab_tray.selected_index) {
                             let pid = item.pane_id;
-                            let ws_id = item.workspace_id;
-                            if let Some(ws) = state.layout_mgr.find_workspace_mut(ws_id) {
-                                ws.remove_pane(pid);
-                            }
-                            state.panes.remove(&pid);
+                            close_pane(state, pid);
                             if state.tab_tray.selected_index > 0
                                 && state.tab_tray.selected_index >= count.saturating_sub(1)
                             {
@@ -2420,8 +2275,14 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     return execute_action(state, action);
                 }
 
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    return execute_action(state, Action::Quit);
+                let is_ctrl_c =
+                    key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+                let is_q = key.code == KeyCode::Char('q') && key.modifiers.is_empty();
+                if is_ctrl_c || is_q {
+                    return confirm_quit_from_empty_workspace(state);
+                }
+                if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
+                    return false;
                 }
 
                 match key.code {
@@ -2457,9 +2318,6 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     }
                     KeyCode::Char('?') => {
                         return execute_action(state, Action::ToggleHelp);
-                    }
-                    KeyCode::Char('q') => {
-                        return execute_action(state, Action::Quit);
                     }
                     _ => {}
                 }
@@ -2529,9 +2387,11 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             // In passthrough or normal non-chord mode, forward key to active child pane
             if let Some(focused_id) = state.layout_mgr.active_workspace().focused_pane {
                 if let Some(pane) = state.panes.get_mut(&focused_id) {
-                    let bytes = key_event_to_bytes(key);
-                    pane.send_input(&bytes);
-                    pane.scroll_to_bottom();
+                    let bytes = key_event_to_bytes(key, pane.application_cursor());
+                    if !bytes.is_empty() {
+                        pane.send_input(&bytes);
+                        pane.scroll_to_bottom();
+                    }
                 }
             }
             false
@@ -2552,12 +2412,26 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                             state.palette.selected_index.saturating_sub(1);
                     }
                     MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                        if let Some(cmd) =
-                            get_selected_command(&state.command_registry, &state.palette)
-                        {
-                            let act = cmd.action.clone();
-                            state.palette.is_open = false;
-                            return execute_action(state, act);
+                        let screen = Rect::new(0, 0, state.term_width, state.term_height);
+                        match hit_test_palette(
+                            screen,
+                            &state.palette,
+                            matched_count,
+                            mouse.column,
+                            mouse.row,
+                        ) {
+                            PaletteClick::Outside => state.palette.is_open = false,
+                            PaletteClick::Inside => {}
+                            PaletteClick::Item(idx) => {
+                                state.palette.selected_index = idx;
+                                if let Some(cmd) =
+                                    get_selected_command(&state.command_registry, &state.palette)
+                                {
+                                    let act = cmd.action.clone();
+                                    state.palette.is_open = false;
+                                    return execute_action(state, act);
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -2578,17 +2452,15 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                 return false;
             }
 
-            let tray_w = if state.tab_tray.is_open {
-                (state.term_width * 25 / 100)
-                    .clamp(24, 45)
-                    .min(state.term_width)
-            } else {
-                0
-            };
+            let tray_w = tray_width(state);
 
-            if state.tab_tray.is_open && mouse.column < tray_w {
+            if state.tab_tray.is_open
+                && mouse.column < tray_w
+                && mouse.row < state.term_height.saturating_sub(1)
+                && !matches!(mouse.kind, MouseEventKind::Down(_))
+            {
                 let tray_items = build_tray_items(state);
-                let filtered = get_filtered_tray_items(&tray_items, &state.tab_tray.search_query);
+                let filtered = filter_tray_items(&tray_items, &state.tab_tray.search_query);
                 let count = filtered.len();
                 match mouse.kind {
                     MouseEventKind::ScrollDown => {
@@ -2606,14 +2478,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                 return false;
             }
 
-            let content_w = state.term_width.saturating_sub(tray_w);
-            let content_h = state.term_height.saturating_sub(1);
-            let content_area = Rect {
-                x: tray_w,
-                y: 0,
-                width: content_w,
-                height: content_h,
-            };
+            let content_area = content_area(state);
 
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -2714,53 +2579,18 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
 
                     // 2. Check if clicked in Tab Tray
                     if state.tab_tray.is_open && col < tray_w {
-                        let list_start_y = if state.tab_tray.is_searching
-                            || !state.tab_tray.search_query.is_empty()
-                        {
-                            2
-                        } else {
-                            1
-                        };
-                        if row >= list_start_y {
-                            let clicked_idx = (row - list_start_y) as usize;
-                            let tray_items = build_tray_items(state);
-                            let filtered =
-                                get_filtered_tray_items(&tray_items, &state.tab_tray.search_query);
-
-                            let mut rendered_row = 0;
-                            let mut current_ws: Option<tag_core::pane::WorkspaceId> = None;
-                            let mut target_item = None;
-
-                            for item in &filtered {
-                                if current_ws != Some(item.workspace_id) {
-                                    current_ws = Some(item.workspace_id);
-                                    if rendered_row == clicked_idx {
-                                        break; // Clicked on workspace header row
-                                    }
-                                    rendered_row += 1;
-                                }
-                                if rendered_row == clicked_idx {
-                                    target_item = Some(*item);
-                                    break;
-                                }
-                                rendered_row += 1;
-                            }
-
-                            if let Some(item) = target_item {
-                                let target_ws = item.workspace_id;
-                                let target_pid = item.pane_id;
-                                let is_min = item.is_minimized;
-                                state.tab_tray.is_open = false;
-                                state.layout_mgr.switch_workspace(target_ws);
-                                if is_min {
-                                    if let Some(ws) = state.layout_mgr.find_workspace_mut(target_ws)
-                                    {
-                                        ws.restore_pane(target_pid, None);
-                                    }
-                                }
-                                state.layout_mgr.active_workspace_mut().focused_pane =
-                                    Some(target_pid);
-                            }
+                        let tray_area =
+                            Rect::new(0, 0, tray_w, state.term_height.saturating_sub(1));
+                        let tray_items = build_tray_items(state);
+                        let target = tray_item_at_row(tray_area, &tray_items, &state.tab_tray, row)
+                            .and_then(|idx| {
+                                filter_tray_items(&tray_items, &state.tab_tray.search_query)
+                                    .get(idx)
+                                    .map(|item| item.pane_id)
+                            });
+                        if let Some(target_pid) = target {
+                            state.tab_tray.is_open = false;
+                            focus_pane_anywhere(state, target_pid);
                         }
                         return false;
                     }
@@ -2801,8 +2631,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 if row == rect.y {
                                     // 1. Clicked on top-right [x] close button
                                     if col >= rect.x + rect.width.saturating_sub(4) {
-                                        state.layout_mgr.active_workspace_mut().remove_pane(pid);
-                                        state.panes.remove(&pid);
+                                        close_pane(state, pid);
                                         return false;
                                     }
                                     // 2. Clicked on maximize/restore button [^] or [-]
@@ -2893,31 +2722,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
         }
         AppEvent::TerminalInput(CrossEvent::Paste(text)) => {
             set_internal_clipboard(&text);
-            if state.palette.is_open {
-                state.palette.query.push_str(&text);
-                state.palette.selected_index = 0;
-                state.is_dirty = true;
-            } else if state.tab_tray.is_open {
-                state.tab_tray.search_query.push_str(&text);
-                state.is_dirty = true;
-            } else if let Some(ref mut prompt) = state.rename_prompt {
-                prompt.input.push_str(&text);
-                state.is_dirty = true;
-            } else if state.vault_state.is_open {
-                state.vault_state.input_buffer.push_str(&text);
-                state.is_dirty = true;
-            } else if let Some(ref mut prompt) = state.git_state.prompt {
-                prompt.input.push_str(&text);
-                state.is_dirty = true;
-            } else if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
-                if let Some(pane) = state.panes.get_mut(&focused) {
-                    pane.clear_selection();
-                    let wrapped = wrap_bracketed_paste(&text);
-                    pane.send_input(&wrapped);
-                    pane.scroll_to_bottom();
-                    state.is_dirty = true;
-                }
-            }
+            route_paste(state, &text);
             false
         }
         AppEvent::FocusGained => {
@@ -2947,15 +2752,23 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                     state.is_dirty = true;
                 }
             }
-            if state.git_state.is_open {
+            drain_background_results(state);
+            if state.git_state.is_open && !state.git_loading {
                 let needs_reload = match &state.git_cache {
                     Some(cache) => cache.loaded_at.elapsed() > std::time::Duration::from_secs(3),
                     None => true,
                 };
                 if needs_reload {
-                    refresh_git_cache(state);
-                    state.is_dirty = true;
+                    request_git_refresh(state);
                 }
+            }
+            // Auto-lock wipes decrypted secrets from memory after the idle timeout
+            if state.vault.enforce_idle_lock() {
+                state.vault_state.mode = VaultMode::Locked;
+                state.vault_state.clear_input();
+                state.vault_state.pending_key.clear();
+                state.vault_state.status_message = Some("Vault locked after idle timeout".into());
+                state.is_dirty = true;
             }
             false
         }
@@ -2965,27 +2778,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             state.term_width = width;
             state.term_height = height;
 
-            let main_area = Rect {
-                x: 0,
-                y: 0,
-                width,
-                height: height.saturating_sub(1),
-            };
-            let content_area = if state.tab_tray.is_open {
-                let tray_w = (main_area.width * 25 / 100)
-                    .clamp(24, 45)
-                    .min(main_area.width);
-                Rect {
-                    x: tray_w,
-                    y: 0,
-                    width: main_area.width.saturating_sub(tray_w),
-                    height: main_area.height,
-                }
-            } else {
-                main_area
-            };
-
-            let rects = state.layout_mgr.compute_rects(content_area);
+            let rects = state.layout_mgr.compute_rects(content_area(state));
             for (pane_id, area) in rects {
                 if let Some(pane) = state.panes.get_mut(&pane_id) {
                     let inner_w = area.width.saturating_sub(2);
@@ -3014,10 +2807,352 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
     }
 }
 
+/// `q` / Ctrl+C on an empty workspace quits immediately only when no panes run anywhere;
+/// otherwise the first press asks for confirmation.
+fn confirm_quit_from_empty_workspace(state: &mut AppState) -> bool {
+    let confirmed = state
+        .quit_confirm_at
+        .is_some_and(|t| t.elapsed() < QUIT_CONFIRM_WINDOW);
+    if state.panes.is_empty() || confirmed {
+        return execute_action(state, Action::Quit);
+    }
+    state.quit_confirm_at = Some(std::time::Instant::now());
+    let running = state.panes.len();
+    push_toast(
+        state,
+        "Quit TAG?",
+        format!(
+            "{} pane(s) are still running in other workspaces. Press again to quit and stop them.",
+            running
+        ),
+        ToastLevel::Warning,
+        QUIT_CONFIRM_WINDOW.as_secs(),
+    );
+    false
+}
+
+fn git_toast_result(
+    state: &mut AppState,
+    ok_title: &str,
+    err_title: &str,
+    res: Result<String, String>,
+) {
+    match res {
+        Ok(msg) => push_toast(state, ok_title, msg, ToastLevel::Success, 4),
+        Err(msg) => push_toast(state, err_title, msg, ToastLevel::Error, 6),
+    }
+}
+
+/// Main worktree path from the cached overlay data, falling back to the active repo.
+fn git_main_worktree_path(state: &AppState) -> PathBuf {
+    state
+        .git_cache
+        .as_ref()
+        .and_then(|c| {
+            c.worktrees
+                .iter()
+                .find(|w| w.is_main)
+                .map(|w| w.path.clone())
+        })
+        .unwrap_or_else(|| get_active_repo_path(state))
+}
+
+fn open_shell_in(state: &mut AppState, title: String, dir: PathBuf) -> bool {
+    let new_id = state.allocate_pane_id();
+    let env = vault_env(state);
+    let (w, h) = initial_pane_size(state);
+    match PtyPane::spawn(
+        new_id,
+        title,
+        PaneKind::Shell,
+        None,
+        &[],
+        &env,
+        Some(dir),
+        w,
+        h,
+        state.config.scrollback_lines,
+        state.event_tx.clone(),
+    ) {
+        Ok(new_pane) => {
+            state.panes.insert(new_id, Box::new(new_pane));
+            let ws = state.layout_mgr.active_workspace_mut();
+            ws.zoomed_pane = None;
+            let _ = ws.split_current(new_id, SplitDirection::Vertical);
+            state.needs_clear = true;
+            true
+        }
+        Err(e) => {
+            push_toast(
+                state,
+                "Spawn Error",
+                format!("Failed to open shell: {}", e),
+                ToastLevel::Error,
+                4,
+            );
+            false
+        }
+    }
+}
+
+fn handle_git_overlay_key(state: &mut AppState, key: crossterm::event::KeyEvent) {
+    // A modal prompt inside the git overlay takes all keys
+    if let Some(prompt) = state.git_state.prompt.clone() {
+        match prompt.mode {
+            GitPromptMode::CreateWorktree => match key.code {
+                KeyCode::Esc => state.git_state.prompt = None,
+                KeyCode::Backspace => {
+                    if let Some(ref mut p) = state.git_state.prompt {
+                        p.input.pop();
+                    }
+                }
+                KeyCode::Enter => {
+                    let name = prompt.input.trim().to_string();
+                    state.git_state.prompt = None;
+                    if name.is_empty() {
+                        return;
+                    }
+                    let active_path = get_active_repo_path(state);
+                    match state
+                        .git_backend
+                        .create_worktree(&active_path, &name, &name)
+                    {
+                        Ok(wt_path) => {
+                            state.git_state.is_open = false;
+                            state.git_cache = None;
+                            if open_shell_in(state, format!("wt: {}", name), wt_path) {
+                                push_toast(
+                                    state,
+                                    "Worktree Created",
+                                    format!("Created worktree and opened shell in {}", name),
+                                    ToastLevel::Success,
+                                    3,
+                                );
+                            }
+                        }
+                        Err(e) => push_toast(
+                            state,
+                            "Worktree Creation Failed",
+                            e.to_string(),
+                            ToastLevel::Error,
+                            5,
+                        ),
+                    }
+                }
+                _ => {
+                    if let Some(c) = text_input_char(&key) {
+                        if let Some(ref mut p) = state.git_state.prompt {
+                            p.input.push(c);
+                        }
+                    }
+                }
+            },
+            GitPromptMode::ConfirmMerge {
+                branch,
+                target_branch,
+                ..
+            } => match key.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    state.git_state.prompt = None;
+                }
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    state.git_state.prompt = None;
+                    let main_path = git_main_worktree_path(state);
+                    let res = state
+                        .git_backend
+                        .merge_branch(&main_path, &branch)
+                        .map(|msg| {
+                            format!(
+                                "Branch '{}' merged into '{}': {}",
+                                branch, target_branch, msg
+                            )
+                        })
+                        .map_err(|e| format!("{} (press A to abort the merge)", e));
+                    request_git_refresh(state);
+                    git_toast_result(state, "Worktree Merged", "Merge Conflict / Error", res);
+                }
+                _ => {}
+            },
+            GitPromptMode::ConfirmDelete {
+                worktree_name,
+                worktree_path,
+            } => match key.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    state.git_state.prompt = None;
+                }
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    state.git_state.prompt = None;
+                    let main_path = git_main_worktree_path(state);
+                    let res = state
+                        .git_backend
+                        .delete_worktree(&main_path, &worktree_path, false)
+                        .map(|_| format!("Worktree '{}' removed", worktree_name))
+                        .map_err(|e| e.to_string());
+                    if res.is_ok() {
+                        state.git_state.selected_index = 0;
+                        state.git_state.selected_worktree = 0;
+                    }
+                    request_git_refresh(state);
+                    git_toast_result(state, "Worktree Removed", "Removal Failed", res);
+                }
+                _ => {}
+            },
+        }
+        return;
+    }
+
+    let selected_worktree = state
+        .git_cache
+        .as_ref()
+        .and_then(|c| c.worktrees.get(state.git_state.selected_worktree).cloned());
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.git_state.is_open = false;
+        }
+        KeyCode::Tab | KeyCode::BackTab => {
+            let section = state.git_state.selected_section;
+            state.git_state.selected_section = if key.code == KeyCode::Tab {
+                (section + 1) % 3
+            } else {
+                (section + 2) % 3
+            };
+            // The worktree list remembers its selection; other lists start at the top
+            state.git_state.selected_index = if state.git_state.selected_section == 0 {
+                state.git_state.selected_worktree
+            } else {
+                0
+            };
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if state.git_state.selected_section == 2 {
+                state.git_state.diff_scroll = state.git_state.diff_scroll.saturating_sub(1);
+            } else {
+                state.git_state.selected_index = state.git_state.selected_index.saturating_sub(1);
+                if state.git_state.selected_section == 0
+                    && state.git_state.selected_worktree != state.git_state.selected_index
+                {
+                    state.git_state.selected_worktree = state.git_state.selected_index;
+                    state.git_state.diff_scroll = 0;
+                    request_git_refresh(state);
+                }
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if state.git_state.selected_section == 2 {
+                state.git_state.diff_scroll = state.git_state.diff_scroll.saturating_add(1);
+            } else {
+                let max_idx = match state.git_state.selected_section {
+                    0 => state
+                        .git_cache
+                        .as_ref()
+                        .map(|c| c.worktrees.len())
+                        .unwrap_or(0),
+                    _ => state
+                        .git_cache
+                        .as_ref()
+                        .map(|c| c.repo_status.changed_files.len())
+                        .unwrap_or(0),
+                };
+                if state.git_state.selected_index + 1 < max_idx {
+                    state.git_state.selected_index += 1;
+                    if state.git_state.selected_section == 0 {
+                        state.git_state.selected_worktree = state.git_state.selected_index;
+                        state.git_state.diff_scroll = 0;
+                        request_git_refresh(state);
+                    }
+                }
+            }
+        }
+        KeyCode::Char('c') | KeyCode::Char('n') | KeyCode::Char('a')
+            if state.git_state.selected_section == 0 =>
+        {
+            state.git_state.prompt = Some(GitPromptState {
+                mode: GitPromptMode::CreateWorktree,
+                input: String::new(),
+            });
+        }
+        KeyCode::Char('A') => {
+            let main_path = git_main_worktree_path(state);
+            let res = state
+                .git_backend
+                .abort_merge(&main_path)
+                .map(|_| "Merge aborted; worktree restored".to_string())
+                .map_err(|e| e.to_string());
+            request_git_refresh(state);
+            git_toast_result(state, "Merge Aborted", "Abort Failed", res);
+        }
+        KeyCode::Char('m') if state.git_state.selected_section == 0 => match selected_worktree {
+            Some(wt) if !wt.is_main => {
+                if let Some(branch) = wt.branch {
+                    let target_branch = state
+                        .git_cache
+                        .as_ref()
+                        .and_then(|c| c.worktrees.iter().find(|w| w.is_main))
+                        .and_then(|w| w.branch.clone())
+                        .unwrap_or_else(|| "the main worktree's HEAD".into());
+                    state.git_state.prompt = Some(GitPromptState {
+                        mode: GitPromptMode::ConfirmMerge {
+                            worktree_name: wt.name,
+                            branch,
+                            target_branch,
+                        },
+                        input: String::new(),
+                    });
+                }
+            }
+            Some(_) => push_toast(
+                state,
+                "Cannot Merge Main",
+                "Select a feature worktree to merge into the main worktree",
+                ToastLevel::Warning,
+                3,
+            ),
+            None => {}
+        },
+        KeyCode::Char('d') | KeyCode::Char('x') if state.git_state.selected_section == 0 => {
+            match selected_worktree {
+                Some(wt) if !wt.is_main => {
+                    state.git_state.prompt = Some(GitPromptState {
+                        mode: GitPromptMode::ConfirmDelete {
+                            worktree_name: wt.name,
+                            worktree_path: wt.path,
+                        },
+                        input: String::new(),
+                    });
+                }
+                Some(_) => push_toast(
+                    state,
+                    "Cannot Delete Main",
+                    "Cannot remove the primary repository worktree",
+                    ToastLevel::Warning,
+                    3,
+                ),
+                None => {}
+            }
+        }
+        KeyCode::Enter if state.git_state.selected_section == 0 => {
+            if let Some(wt) = selected_worktree {
+                state.git_state.is_open = false;
+                if open_shell_in(state, format!("wt: {}", wt.name), wt.path) {
+                    push_toast(
+                        state,
+                        "Worktree Opened",
+                        format!("Opened shell in {}", wt.name),
+                        ToastLevel::Info,
+                        3,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn execute_action(state: &mut AppState, action: Action) -> bool {
     match action {
         Action::Quit => {
-            save_session_to_disk(state);
+            // The session is saved once when the main loop exits
             return true;
         }
         Action::Redraw => {
@@ -3034,7 +3169,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 duration_secs: 3,
             });
             let tx = state.event_tx.clone();
-            let current_ver = env!("CARGO_PKG_VERSION").to_string();
+            let current_ver = TAG_VERSION.to_string();
             std::thread::spawn(move || {
                 if let Some(newer) = crate::update::check_for_github_update(&current_ver) {
                     let _ = tx.send(AppEvent::UpdateAvailable(newer));
@@ -3087,13 +3222,15 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         Action::ToggleGitOverlay => {
             state.git_state.is_open = !state.git_state.is_open;
             if state.git_state.is_open {
-                refresh_git_cache(state);
+                request_git_refresh(state);
             } else {
                 state.git_cache = None;
+                state.git_state.prompt = None;
             }
         }
         Action::ToggleSnippetOverlay => {
             state.snippet_state.is_open = !state.snippet_state.is_open;
+            state.snippet_state.fill = None;
             if state.snippet_state.is_open {
                 let snippets_path = dirs_or_home()
                     .join(".config")
@@ -3115,6 +3252,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     state.vault_state.mode = VaultMode::Locked;
                 }
                 state.vault_state.clear_input();
+                state.vault_state.clear_pending_passphrase();
                 state.vault_state.pending_key.clear();
                 state.vault_state.status_message = None;
             }
@@ -3159,22 +3297,10 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 return false;
             }
             let new_id = state.allocate_pane_id();
-            let env = if state.vault.is_unlocked() {
-                state.vault.get_env_set()
-            } else {
-                HashMap::new()
-            };
-
-            let (w, h) = if state.term_width > 0 && state.term_height > 0 {
-                (
-                    state.term_width.saturating_sub(2),
-                    state.term_height.saturating_sub(4),
-                )
-            } else {
-                (80, 24)
-            };
-
-            let split_cwd = Some(dirs_or_home());
+            let env = vault_env(state);
+            let (w, h) = initial_pane_size(state);
+            // New splits start where the focused pane currently is
+            let split_cwd = focused_pane_cwd(state).or_else(|| Some(dirs_or_home()));
 
             if let Ok(new_pane) = PtyPane::spawn(
                 new_id,
@@ -3199,9 +3325,22 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ClosePane => {
             if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
-                state.layout_mgr.active_workspace_mut().remove_pane(focused);
-                state.panes.remove(&focused);
+                close_pane(state, focused);
+            }
+        }
+        Action::SwitchWorkspaceIndex(idx) => {
+            if state.layout_mgr.switch_workspace_index(idx) {
                 state.needs_clear = true;
+            }
+        }
+        Action::SendLeaderKey => {
+            let leader = state.key_state_machine.keymap().leader.clone();
+            let ev = crossterm::event::KeyEvent::new(leader.code, leader.modifiers);
+            if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
+                if let Some(pane) = state.panes.get_mut(&focused) {
+                    let bytes = key_event_to_bytes(ev, pane.application_cursor());
+                    pane.send_input(&bytes);
+                }
             }
         }
         Action::SwitchWorkspace(ws_id) => {
@@ -3217,19 +3356,15 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             state.needs_clear = true;
         }
         Action::NewWorkspace => {
+            // Capture the focused pane's directory before the new workspace becomes active
+            let ws_cwd_hint = focused_pane_cwd(state);
             let _new_id = state
                 .layout_mgr
                 .add_workspace(format!("WS-{}", state.layout_mgr.workspaces().len() + 1));
+            let ws_cwd = ws_cwd_hint.or_else(|| Some(dirs_or_home()));
             let new_pid = state.allocate_pane_id();
-            let (w, h) = if state.term_width > 0 && state.term_height > 0 {
-                (
-                    state.term_width.saturating_sub(2),
-                    state.term_height.saturating_sub(4),
-                )
-            } else {
-                (80, 24)
-            };
-            let ws_cwd = Some(dirs_or_home());
+            let (w, h) = initial_pane_size(state);
+            let env = vault_env(state);
 
             if let Ok(new_pane) = PtyPane::spawn(
                 new_pid,
@@ -3237,7 +3372,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 PaneKind::Shell,
                 None,
                 &[],
-                &HashMap::new(),
+                &env,
                 ws_cwd,
                 w,
                 h,
@@ -3266,7 +3401,10 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             let (closed, pids) = state.layout_mgr.close_workspace(ws_id);
             if closed {
                 for pid in &pids {
-                    state.panes.remove(pid);
+                    if let Some(mut pane) = state.panes.remove(pid) {
+                        pane.kill();
+                    }
+                    state.attention_queue.clear_by_pane(*pid);
                 }
                 state.needs_clear = true;
                 state.toasts.push(Toast {
@@ -3283,26 +3421,17 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             return execute_action(state, Action::CloseWorkspace(active_id));
         }
         Action::Focus(dir) => {
-            // Move focus between panes
-            let panes = state.layout_mgr.active_workspace().all_panes();
-            if let Some(curr) = state.layout_mgr.active_workspace().focused_pane {
-                if let Some(pos) = panes.iter().position(|&p| p == curr) {
-                    let next_pos = match dir {
-                        Direction::Right | Direction::Down => (pos + 1) % panes.len(),
-                        Direction::Left | Direction::Up => {
-                            if pos == 0 {
-                                panes.len() - 1
-                            } else {
-                                pos - 1
-                            }
-                        }
-                    };
-                    state.layout_mgr.active_workspace_mut().focused_pane = Some(panes[next_pos]);
+            // Move focus to the pane that is actually in that direction on screen
+            let area = content_area(state);
+            let ws = state.layout_mgr.active_workspace();
+            if let Some(curr) = ws.focused_pane {
+                if let Some(next) = ws.neighbor_in_direction(area, curr, dir) {
+                    state.layout_mgr.active_workspace_mut().focused_pane = Some(next);
                 }
             }
         }
         Action::FocusPane(pid) => {
-            state.layout_mgr.active_workspace_mut().focused_pane = Some(pid);
+            focus_pane_anywhere(state, pid);
         }
         Action::SpawnShell => {
             execute_action(state, Action::Split(SplitDirection::Vertical));
@@ -3414,16 +3543,14 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             }
         }
         Action::PasteImageBridge => {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            // Save next to the focused pane's project so the agent there can read it
+            let cwd = focused_pane_cwd(state)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| PathBuf::from("."));
             match ImageBridge::save_clipboard_image(&cwd) {
                 Ok(path) => {
-                    if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
-                        if let Some(pane) = state.panes.get_mut(&focused) {
-                            let text = path.to_string_lossy().to_string();
-                            let wrapped = wrap_bracketed_paste(&text);
-                            pane.send_input(&wrapped);
-                        }
-                    }
+                    let text = path.to_string_lossy().to_string();
+                    paste_into_focused(state, &text);
                     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("image");
                     state.toasts.push(Toast {
                         title: "Image Bridge".into(),
@@ -3449,17 +3576,31 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             state.tour.step = 0;
         }
         Action::ReloadConfig => {
-            state.config = load_app_config();
-            state.theme = Theme::from_config(state.config.theme.clone());
-            state.key_state_machine =
-                KeyStateMachine::from_config(&state.config, &state.command_registry);
-            state.toasts.push(Toast {
-                title: "Config".into(),
-                message: "Configuration reloaded.".into(),
-                level: ToastLevel::Info,
-                created_at: chrono::Utc::now(),
-                duration_secs: 3,
-            });
+            let (config, error) = load_app_config();
+            if let Some(err) = error {
+                // Keep the current settings rather than silently falling back to defaults
+                state.config_error = Some(err.clone());
+                push_toast(
+                    state,
+                    "Config Error",
+                    format!("Not reloaded: {}", err),
+                    ToastLevel::Error,
+                    8,
+                );
+            } else {
+                state.config_error = None;
+                state.config = config;
+                state.theme = Theme::from_config(state.config.theme.clone());
+                state.key_state_machine =
+                    KeyStateMachine::from_config(&state.config, &state.command_registry);
+                push_toast(
+                    state,
+                    "Config",
+                    "Configuration reloaded.",
+                    ToastLevel::Info,
+                    3,
+                );
+            }
         }
         Action::CopySelection => {
             if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
@@ -3482,40 +3623,15 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::PasteFromClipboard => {
             if let Some(text) = get_clipboard_text() {
-                if state.palette.is_open {
-                    state.palette.query.push_str(&text);
-                    state.palette.selected_index = 0;
-                    state.is_dirty = true;
-                } else if state.tab_tray.is_open {
-                    state.tab_tray.search_query.push_str(&text);
-                    state.is_dirty = true;
-                } else if let Some(ref mut prompt) = state.rename_prompt {
-                    prompt.input.push_str(&text);
-                    state.is_dirty = true;
-                } else if state.vault_state.is_open {
-                    state.vault_state.input_buffer.push_str(&text);
-                    state.is_dirty = true;
-                } else if let Some(ref mut prompt) = state.git_state.prompt {
-                    prompt.input.push_str(&text);
-                    state.is_dirty = true;
-                } else if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
-                    if let Some(pane) = state.panes.get_mut(&focused) {
-                        pane.clear_selection();
-                        let wrapped = wrap_bracketed_paste(&text);
-                        pane.send_input(&wrapped);
-                        pane.scroll_to_bottom();
-                        state.is_dirty = true;
-                    }
-                }
+                route_paste(state, &text);
             } else {
-                state.toasts.push(Toast {
-                    title: "Clipboard Empty".into(),
-                    message: "No text found in system or TAG clipboard.".into(),
-                    level: ToastLevel::Warning,
-                    created_at: chrono::Utc::now(),
-                    duration_secs: 3,
-                });
-                state.is_dirty = true;
+                push_toast(
+                    state,
+                    "Clipboard Empty",
+                    "No text found in system or TAG clipboard.",
+                    ToastLevel::Warning,
+                    3,
+                );
             }
         }
         Action::SpawnApplet { name } => {
@@ -3530,9 +3646,15 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 return false;
             }
             let pid = state.allocate_pane_id();
-            let applet_pane: Box<dyn Pane> = match name.as_str() {
-                "poker" => Box::new(PokerPane::new(pid)),
-                _ => Box::new(PeerChatPane::new(pid)),
+            let Some(applet_pane) = make_applet(&name, pid) else {
+                push_toast(
+                    state,
+                    "Unknown Applet",
+                    format!("No applet named '{}' (available: chat, poker).", name),
+                    ToastLevel::Error,
+                    3,
+                );
+                return false;
             };
             state.panes.insert(pid, applet_pane);
             let _ = state
@@ -3565,13 +3687,42 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
             state.needs_clear = true;
         }
         Action::Detach => {
-            save_session_to_disk(state);
-            run_tmux_silent(&["detach-client"]);
-            return true;
+            // Detaching keeps TAG (and every pane) running in its background tmux session
+            if in_tag_background_session() {
+                save_session_to_disk(state);
+                run_tmux_silent(&["detach-client"]);
+            } else {
+                push_toast(
+                    state,
+                    "Detach Unavailable",
+                    "TAG is running in the foreground. Start it with 'tag --bg' (or enable background mode) to detach and re-attach later.",
+                    ToastLevel::Warning,
+                    5,
+                );
+            }
+            return false;
         }
         Action::ToggleBackgroundMode => {
+            if let Some(err) = state.config_error.clone() {
+                push_toast(
+                    state,
+                    "Config Error",
+                    format!("Fix config.toml before changing settings ({})", err),
+                    ToastLevel::Error,
+                    6,
+                );
+                return false;
+            }
             state.config.run_in_background = !state.config.run_in_background;
-            save_app_config(&state.config);
+            if let Err(e) = save_app_config(&state.config) {
+                push_toast(
+                    state,
+                    "Config",
+                    format!("Could not save config: {}", e),
+                    ToastLevel::Error,
+                    5,
+                );
+            }
             let status = if state.config.run_in_background {
                 "enabled (TAG will persist in background)"
             } else {
@@ -3590,6 +3741,31 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
     false
 }
 
+fn make_applet(name: &str, pid: PaneId) -> Option<Box<dyn Pane>> {
+    match name {
+        "poker" => Some(Box::new(PokerPane::new(pid))),
+        "chat" => Some(Box::new(PeerChatPane::new(pid))),
+        _ => None,
+    }
+}
+
+fn push_toast(
+    state: &mut AppState,
+    title: &str,
+    message: impl Into<String>,
+    level: ToastLevel,
+    duration_secs: u64,
+) {
+    state.toasts.push(Toast {
+        title: title.into(),
+        message: message.into(),
+        level,
+        created_at: chrono::Utc::now(),
+        duration_secs,
+    });
+    state.is_dirty = true;
+}
+
 impl AppState {
     fn allocate_pane_id(&mut self) -> PaneId {
         let id = PaneId(self.next_pane_id);
@@ -3598,26 +3774,271 @@ impl AppState {
     }
 }
 
-fn key_event_to_bytes(key: crossterm::event::KeyEvent) -> Vec<u8> {
+/// Map Ctrl+<key> to its control byte (as xterm does).
+fn ctrl_byte(c: char) -> Option<u8> {
+    match c.to_ascii_lowercase() {
+        c @ 'a'..='z' => Some(c as u8 - b'a' + 1),
+        ' ' | '@' | '2' => Some(0),
+        '[' | '3' => Some(0x1b),
+        '\\' | '4' => Some(0x1c),
+        ']' | '5' => Some(0x1d),
+        '^' | '6' => Some(0x1e),
+        '_' | '-' | '7' => Some(0x1f),
+        '?' | '8' => Some(0x7f),
+        _ => None,
+    }
+}
+
+/// Encode a key event the way xterm would, so programs in panes receive
+/// navigation keys, function keys and modifier combinations.
+fn key_event_to_bytes(key: crossterm::event::KeyEvent, app_cursor: bool) -> Vec<u8> {
+    let mods = key.modifiers;
+    let shift = mods.contains(KeyModifiers::SHIFT);
+    let alt = mods.contains(KeyModifiers::ALT);
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    // xterm modifier parameter: 1 + shift + 2*alt + 4*ctrl
+    let m = 1 + shift as u8 + 2 * alt as u8 + 4 * ctrl as u8;
+
+    // CSI 1;<m><final> with modifiers, otherwise CSI/SS3 <final>
+    let cursor = |fin: char| -> Vec<u8> {
+        if m > 1 {
+            format!("\x1b[1;{}{}", m, fin).into_bytes()
+        } else if app_cursor {
+            format!("\x1bO{}", fin).into_bytes()
+        } else {
+            format!("\x1b[{}", fin).into_bytes()
+        }
+    };
+    // CSI <n>[;<m>]~
+    let tilde = |n: u8| -> Vec<u8> {
+        if m > 1 {
+            format!("\x1b[{};{}~", n, m).into_bytes()
+        } else {
+            format!("\x1b[{}~", n).into_bytes()
+        }
+    };
+    let with_alt = |mut bytes: Vec<u8>| -> Vec<u8> {
+        if alt {
+            bytes.insert(0, 0x1b);
+        }
+        bytes
+    };
+
     match key.code {
         KeyCode::Char(c) => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                let code = (c.to_ascii_lowercase() as u8).saturating_sub(b'a' - 1);
-                vec![code]
+            let bytes = if ctrl {
+                ctrl_byte(c)
+                    .map(|b| vec![b])
+                    .unwrap_or_else(|| c.to_string().into_bytes())
             } else {
                 c.to_string().into_bytes()
+            };
+            with_alt(bytes)
+        }
+        KeyCode::Enter => with_alt(vec![b'\r']),
+        KeyCode::Backspace => with_alt(vec![if ctrl { 0x08 } else { 0x7f }]),
+        KeyCode::Tab => with_alt(vec![b'\t']),
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
+        KeyCode::Esc => with_alt(vec![0x1b]),
+        KeyCode::Up => cursor('A'),
+        KeyCode::Down => cursor('B'),
+        KeyCode::Right => cursor('C'),
+        KeyCode::Left => cursor('D'),
+        KeyCode::Home => cursor('H'),
+        KeyCode::End => cursor('F'),
+        KeyCode::Insert => tilde(2),
+        KeyCode::Delete => tilde(3),
+        KeyCode::PageUp => tilde(5),
+        KeyCode::PageDown => tilde(6),
+        KeyCode::F(n @ 1..=4) => {
+            let fin = (b'P' + (n - 1)) as char;
+            if m > 1 {
+                format!("\x1b[1;{}{}", m, fin).into_bytes()
+            } else {
+                format!("\x1bO{}", fin).into_bytes()
             }
         }
-        KeyCode::Enter => vec![b'\r'],
-        KeyCode::Backspace => vec![8],
-        KeyCode::Tab => vec![9],
-        KeyCode::Esc => vec![27],
-        KeyCode::Up => vec![27, b'[', b'A'],
-        KeyCode::Down => vec![27, b'[', b'B'],
-        KeyCode::Right => vec![27, b'[', b'C'],
-        KeyCode::Left => vec![27, b'[', b'D'],
+        KeyCode::F(n @ 5..=12) => {
+            let code = match n {
+                5 => 15,
+                6 => 17,
+                7 => 18,
+                8 => 19,
+                9 => 20,
+                10 => 21,
+                11 => 23,
+                _ => 24,
+            };
+            tilde(code)
+        }
         _ => Vec::new(),
     }
+}
+
+/// Printable character for a text field, ignoring Ctrl/Alt chords.
+fn text_input_char(key: &crossterm::event::KeyEvent) -> Option<char> {
+    match key.code {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(c)
+        }
+        _ => None,
+    }
+}
+
+fn vault_env(state: &mut AppState) -> HashMap<String, String> {
+    if state.vault.is_unlocked() {
+        state.vault.get_env_set()
+    } else {
+        HashMap::new()
+    }
+}
+
+/// Size for a newly spawned pane before its first render resizes it.
+fn initial_pane_size(state: &AppState) -> (u16, u16) {
+    if state.term_width > 0 && state.term_height > 0 {
+        (
+            state.term_width.saturating_sub(2),
+            state.term_height.saturating_sub(4),
+        )
+    } else {
+        (80, 24)
+    }
+}
+
+/// Screen area used by panes (excludes the status bar and an open tab tray).
+fn content_area(state: &AppState) -> Rect {
+    let height = state.term_height.saturating_sub(1);
+    let tray_w = tray_width(state);
+    Rect {
+        x: tray_w,
+        y: 0,
+        width: state.term_width.saturating_sub(tray_w),
+        height,
+    }
+}
+
+fn tray_width(state: &AppState) -> u16 {
+    if state.tab_tray.is_open {
+        (state.term_width * 25 / 100)
+            .clamp(24, 45)
+            .min(state.term_width)
+    } else {
+        0
+    }
+}
+
+/// Current directory of the focused pane (falls back to its spawn directory).
+fn focused_pane_cwd(state: &AppState) -> Option<PathBuf> {
+    let pid = state.layout_mgr.active_workspace().focused_pane?;
+    let pane = state.panes.get(&pid)?;
+    let (_, _, cwd) = pane.running_process();
+    cwd.or_else(|| pane.cwd()).filter(|p| p.is_dir())
+}
+
+/// Focus a pane wherever it lives: switch to its workspace and restore it if minimized.
+fn focus_pane_anywhere(state: &mut AppState, pid: PaneId) -> bool {
+    let Some(ws_id) = state.layout_mgr.find_pane_workspace(pid) else {
+        return false;
+    };
+    state.layout_mgr.switch_workspace(ws_id);
+    let ws = state.layout_mgr.active_workspace_mut();
+    if ws.is_minimized(pid) {
+        ws.restore_pane(pid, None);
+    }
+    ws.focused_pane = Some(pid);
+    state.needs_clear = true;
+    true
+}
+
+/// Close a pane: remove it from every workspace, kill its process and drop its alerts.
+fn close_pane(state: &mut AppState, pid: PaneId) {
+    for ws in state.layout_mgr.workspaces_mut() {
+        ws.remove_pane(pid);
+    }
+    if let Some(mut pane) = state.panes.remove(&pid) {
+        pane.kill();
+    }
+    state.attention_queue.clear_by_pane(pid);
+    state.needs_clear = true;
+}
+
+/// Send text to the focused pane as a paste (bracketed only if the program enabled it).
+fn paste_into_focused(state: &mut AppState, text: &str) {
+    if let Some(focused) = state.layout_mgr.active_workspace().focused_pane {
+        if let Some(pane) = state.panes.get_mut(&focused) {
+            pane.clear_selection();
+            let bytes = if pane.bracketed_paste() {
+                wrap_bracketed_paste(text)
+            } else {
+                text.as_bytes().to_vec()
+            };
+            pane.send_input(&bytes);
+            pane.scroll_to_bottom();
+            state.is_dirty = true;
+        }
+    }
+}
+
+/// Deliver pasted text to whichever input currently has focus: a text field in an
+/// open overlay, or the focused pane when no overlay is open. Overlays without a
+/// text field swallow the paste instead of sending it to the pane behind them.
+fn route_paste(state: &mut AppState, text: &str) {
+    state.is_dirty = true;
+    if let Some(ref mut prompt) = state.rename_prompt {
+        prompt.input.push_str(text);
+    } else if state.palette.is_open {
+        state.palette.query.push_str(text);
+        state.palette.selected_index = 0;
+    } else if state.help_open
+        || state.tour.is_active
+        || state.attention_state.is_open
+        || state.usage_state.is_open
+    {
+        // no text input
+    } else if state.git_state.is_open {
+        if let Some(ref mut prompt) = state.git_state.prompt {
+            if prompt.mode == GitPromptMode::CreateWorktree {
+                prompt.input.push_str(text);
+            }
+        }
+    } else if state.snippet_state.is_open {
+        if let Some(ref mut fill) = state.snippet_state.fill {
+            fill.input.push_str(text);
+        }
+    } else if state.vault_state.is_open {
+        let accepts_text = !state.vault.is_unlocked()
+            || matches!(
+                state.vault_state.mode,
+                VaultMode::AddingKey | VaultMode::AddingValue
+            );
+        if accepts_text {
+            state.vault_state.input_buffer.push_str(text);
+        }
+    } else if state.tab_tray.is_open {
+        state.tab_tray.search_query.push_str(text);
+        state.tab_tray.is_searching = true;
+        state.tab_tray.selected_index = 0;
+    } else {
+        paste_into_focused(state, text);
+    }
+}
+
+/// True when this TAG instance is running inside its own background tmux session.
+fn in_tag_background_session() -> bool {
+    if !inside_tmux() {
+        return false;
+    }
+    std::process::Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == TAG_SESSION_NAME)
+        .unwrap_or(false)
 }
 
 fn dirs_or_home() -> PathBuf {
@@ -3645,7 +4066,9 @@ fn save_session_to_disk(state: &AppState) {
                 .map(tag_pty::clean_tmux_session_name)
         });
 
-        let (command, args, kind, title) = if let Some(session) = tmux_session {
+        let (command, args, kind, title) = if let Some(name) = pane.applet_name() {
+            (None, vec![name.to_string()], PaneKind::Applet, pane.title())
+        } else if let Some(session) = tmux_session {
             (
                 Some("tmux".to_string()),
                 vec![
@@ -3727,67 +4150,31 @@ fn build_tray_items(state: &AppState) -> Vec<TrayItem> {
     tray_items
 }
 
-fn get_filtered_tray_items<'a>(items: &'a [TrayItem], query: &str) -> Vec<&'a TrayItem> {
-    items
-        .iter()
-        .filter(|item| {
-            if query.is_empty() {
-                true
-            } else {
-                let q = query.to_lowercase();
-                item.title.to_lowercase().contains(&q)
-                    || item.workspace_name.to_lowercase().contains(&q)
-                    || item
-                        .branch
-                        .as_deref()
-                        .unwrap_or("")
-                        .to_lowercase()
-                        .contains(&q)
+fn candidate_repo_dir(state: &AppState) -> PathBuf {
+    if let Some(p) = focused_pane_cwd(state) {
+        return p;
+    }
+    if let Some(ref binding) = state.layout_mgr.active_workspace().worktree_binding {
+        if binding.exists() {
+            return binding.clone();
+        }
+    }
+    for pane in state.panes.values() {
+        let (_, _, cwd) = pane.running_process();
+        if let Some(p) = cwd.or_else(|| pane.cwd()) {
+            if p.exists() {
+                return p;
             }
-        })
-        .collect()
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn get_active_repo_path(state: &AppState) -> PathBuf {
-    let mut candidate_path = None;
-
-    if let Some(focused_pid) = state.layout_mgr.active_workspace().focused_pane {
-        if let Some(pane) = state.panes.get(&focused_pid) {
-            let (_, _, cwd) = pane.running_process();
-            if let Some(p) = cwd.or_else(|| pane.cwd()) {
-                if p.exists() {
-                    candidate_path = Some(p);
-                }
-            }
-        }
-    }
-
-    if candidate_path.is_none() {
-        if let Some(ref binding) = state.layout_mgr.active_workspace().worktree_binding {
-            if binding.exists() {
-                candidate_path = Some(binding.clone());
-            }
-        }
-    }
-
-    if candidate_path.is_none() {
-        for pane in state.panes.values() {
-            let (_, _, cwd) = pane.running_process();
-            if let Some(p) = cwd.or_else(|| pane.cwd()) {
-                if p.exists() {
-                    candidate_path = Some(p);
-                    break;
-                }
-            }
-        }
-    }
-
-    let search_path = candidate_path
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
+/// Main repository root for `search_path` (shared by all of its worktrees).
+fn resolve_repo_root(search_path: &std::path::Path) -> PathBuf {
     if let Ok(output) = std::process::Command::new("git")
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .current_dir(&search_path)
+        .current_dir(search_path)
         .output()
     {
         if output.status.success() {
@@ -3803,7 +4190,7 @@ fn get_active_repo_path(state: &AppState) -> PathBuf {
 
     if let Ok(output) = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(&search_path)
+        .current_dir(search_path)
         .output()
     {
         if output.status.success() {
@@ -3814,31 +4201,152 @@ fn get_active_repo_path(state: &AppState) -> PathBuf {
         }
     }
 
-    search_path
+    search_path.to_path_buf()
 }
 
-fn refresh_git_cache(state: &mut AppState) {
-    let active_repo_path = get_active_repo_path(state);
-    let worktrees = state
-        .git_backend
-        .list_worktrees(&active_repo_path)
-        .unwrap_or_default();
+fn get_active_repo_path(state: &AppState) -> PathBuf {
+    resolve_repo_root(&candidate_repo_dir(state))
+}
 
-    let target_path = if let Some(wt) = worktrees.get(state.git_state.selected_index) {
-        wt.path.clone()
-    } else {
-        active_repo_path.clone()
-    };
+/// Recompute the git overlay data on a background thread. Results are applied on the
+/// next tick; responses to superseded requests are discarded by generation.
+fn request_git_refresh(state: &mut AppState) {
+    state.git_generation += 1;
+    state.git_loading = true;
+    let generation = state.git_generation;
+    let search_path = candidate_repo_dir(state);
+    let selected = state.git_state.selected_worktree;
+    let tx = state.git_tx.clone();
+    let _ = std::thread::Builder::new()
+        .name("git-refresh".into())
+        .spawn(move || {
+            let backend = StandardGitBackend;
+            let repo = resolve_repo_root(&search_path);
+            let worktrees = backend.list_worktrees(&repo).unwrap_or_default();
+            let target = worktrees
+                .get(selected)
+                .map(|w| w.path.clone())
+                .unwrap_or_else(|| repo.clone());
+            let repo_status = backend.repo_status(&target).unwrap_or_default();
+            let diff = backend.get_diff(&target).unwrap_or_default();
+            let _ = tx.send((
+                generation,
+                CachedGitData {
+                    worktrees,
+                    repo_status,
+                    diff,
+                    loaded_at: std::time::Instant::now(),
+                },
+            ));
+        });
+}
 
-    let repo_status = state
-        .git_backend
-        .repo_status(&target_path)
-        .unwrap_or_default();
-    let diff = state.git_backend.get_diff(&target_path).unwrap_or_default();
-    state.git_cache = Some(CachedGitData {
-        worktrees,
-        repo_status,
-        diff,
-        loaded_at: std::time::Instant::now(),
-    });
+/// Apply finished background work (usage scans, git refreshes) to the UI state.
+fn drain_background_results(state: &mut AppState) {
+    let mut usage_changed = false;
+    while let Ok(events) = state.usage_rx.try_recv() {
+        if state.usage_store.insert_events_batch(&events).unwrap_or(0) > 0 {
+            usage_changed = true;
+        }
+    }
+    if usage_changed {
+        state.update_usage_summary();
+        state.is_dirty = true;
+    }
+
+    while let Ok((generation, data)) = state.git_rx.try_recv() {
+        if generation != state.git_generation {
+            continue;
+        }
+        state.git_loading = false;
+        if state.git_state.is_open {
+            let count = data.worktrees.len();
+            if state.git_state.selected_worktree >= count {
+                state.git_state.selected_worktree = count.saturating_sub(1);
+                if state.git_state.selected_section == 0 {
+                    state.git_state.selected_index = state.git_state.selected_worktree;
+                }
+            }
+            state.git_cache = Some(data);
+            state.is_dirty = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+
+    fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, mods)
+    }
+
+    #[test]
+    fn test_navigation_and_function_keys_are_encoded() {
+        let none = KeyModifiers::empty();
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Delete, none), false),
+            b"\x1b[3~"
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Home, none), false),
+            b"\x1b[H"
+        );
+        assert_eq!(key_event_to_bytes(key(KeyCode::End, none), true), b"\x1bOF");
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::PageDown, none), false),
+            b"\x1b[6~"
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::BackTab, KeyModifiers::SHIFT), false),
+            b"\x1b[Z"
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::F(1), none), false),
+            b"\x1bOP"
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::F(5), none), false),
+            b"\x1b[15~"
+        );
+        assert_eq!(key_event_to_bytes(key(KeyCode::Up, none), true), b"\x1bOA");
+        assert_eq!(key_event_to_bytes(key(KeyCode::Up, none), false), b"\x1b[A");
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Right, KeyModifiers::CONTROL), false),
+            b"\x1b[1;5C"
+        );
+    }
+
+    #[test]
+    fn test_modifier_chars_are_encoded() {
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Backspace, KeyModifiers::empty()), false),
+            vec![0x7f]
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Char('x'), KeyModifiers::ALT), false),
+            b"\x1bx"
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Char('c'), KeyModifiers::CONTROL), false),
+            vec![3]
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Char('\\'), KeyModifiers::CONTROL), false),
+            vec![0x1c]
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Char(']'), KeyModifiers::CONTROL), false),
+            vec![0x1d]
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Char(' '), KeyModifiers::CONTROL), false),
+            vec![0]
+        );
+        assert_eq!(
+            key_event_to_bytes(key(KeyCode::Char('é'), KeyModifiers::empty()), false),
+            "é".as_bytes()
+        );
+    }
 }
