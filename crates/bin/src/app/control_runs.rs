@@ -857,6 +857,13 @@ fn approve_plan(state: &mut AppState, client: &ClientCtx, p: RunRef) -> ControlR
                 run.transition(RunState::Running, Some("plan approved".into()))
                     .map_err(orch_err)?,
             );
+        } else if run.state == RunState::Paused {
+            // Resuming a run paused at its budget: the budget no longer stops it.
+            run.budget_usd = 0.0;
+            events.push(
+                run.transition(RunState::Running, Some("resumed by the human".into()))
+                    .map_err(orch_err)?,
+            );
         }
         events.extend(run.queue_planned());
         Ok(run.clone())
@@ -883,7 +890,8 @@ fn run_cancel(state: &mut AppState, client: &ClientCtx, p: RunCancelParams) -> C
                     .map_err(orch_err)?,
             );
         }
-        let panes: Vec<u64> = run.tasks.iter().filter_map(|t| t.pane).collect();
+        let mut panes: Vec<u64> = run.tasks.iter().filter_map(|t| t.pane).collect();
+        panes.extend(run.conductor.as_ref().and_then(|c| c.pane));
         Ok((run.clone(), panes))
     })?;
     if p.kill_workers {
@@ -1075,6 +1083,45 @@ pub(crate) fn resolve_task_worktree(
 }
 
 // ---------------------------------------------------------------------------------------------
+// Budgets
+// ---------------------------------------------------------------------------------------------
+
+/// Charge usage events to runs: event session id → pane (TAG-chosen session id) → run.
+/// Returns the runs whose budget was newly exceeded.
+pub(crate) fn attribute_usage(
+    state: &mut AppState,
+    events: &[tag_usage::UsageEvent],
+) -> Vec<String> {
+    if state.runs.is_empty() || events.is_empty() {
+        return Vec::new();
+    }
+    let by_session: HashMap<String, String> = state
+        .pane_meta
+        .values()
+        .filter_map(|m| Some((m.session_id.clone()?, m.run.clone()?)))
+        .collect();
+    if by_session.is_empty() {
+        return Vec::new();
+    }
+    let pricing = tag_usage::PricingConfig::default();
+    let mut charges: HashMap<String, f64> = HashMap::new();
+    for ev in events {
+        if let Some(run) = by_session.get(&ev.session_id) {
+            *charges.entry(run.clone()).or_default() += pricing.estimate_cost(ev);
+        }
+    }
+    let mut exceeded = Vec::new();
+    for (run, usd) in charges {
+        let newly = with_run(state, &run, |a, _| Ok(a.run.add_cost(usd))).unwrap_or(false);
+        if newly {
+            exceeded.push(run.clone());
+        }
+        schedule(state, &run);
+    }
+    exceeded
+}
+
+// ---------------------------------------------------------------------------------------------
 // Scheduler loop
 // ---------------------------------------------------------------------------------------------
 
@@ -1201,19 +1248,64 @@ fn schedule(state: &mut AppState, run_id: &str) {
                 }
             }
             SchedulerAction::PauseForBudget => {
-                let _ = with_run(state, run_id, |a, ev| {
+                let hard = state
+                    .runs
+                    .get(run_id)
+                    .is_some_and(|a| a.settings.hard_budget);
+                let killed: Vec<u64> = with_run(state, run_id, |a, ev| {
                     ev.push(
                         a.run
                             .transition(RunState::Paused, Some("budget reached".into()))
                             .map_err(orch_err)?,
                     );
-                    Ok(())
-                });
+                    let mut killed = Vec::new();
+                    if hard {
+                        let active: Vec<String> = a
+                            .run
+                            .tasks
+                            .iter()
+                            .filter(|t| t.state.is_active())
+                            .map(|t| t.id.clone())
+                            .collect();
+                        for t in active {
+                            if let Ok(e) = a.run.transition_task(
+                                &t,
+                                TaskState::Failed,
+                                Some("budget reached".into()),
+                            ) {
+                                ev.push(e);
+                            }
+                            if let Some(p) = a.run.task(&t).and_then(|t| t.pane) {
+                                killed.push(p);
+                            }
+                        }
+                    }
+                    Ok(killed)
+                })
+                .unwrap_or_default();
+                for p in killed {
+                    if state.panes.contains_key(&PaneId(p as u32)) {
+                        close_pane(state, PaneId(p as u32));
+                    }
+                }
+                let (spent, budget) = state
+                    .runs
+                    .get(run_id)
+                    .map(|a| (a.run.spent_usd, a.run.budget_usd))
+                    .unwrap_or_default();
                 raise_attention(
                     state,
                     run_id,
                     None,
-                    format!("Run {run_id} paused: budget reached"),
+                    format!(
+                        "Run {run_id} paused: budget reached (${spent:.2} of ${budget:.2}){}. Resume with run.approve_plan.",
+                        if hard { "; workers stopped" } else { "; running workers continue" }
+                    ),
+                );
+                notify_conductor(
+                    state,
+                    run_id,
+                    &format!("run {run_id} is paused: budget reached"),
                 );
             }
             SchedulerAction::MarkRunDone => {
@@ -1324,6 +1416,80 @@ fn spawn_worker(state: &mut AppState, run_id: &str, task_id: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::tests::test_state;
+
+    fn usage(session: &str, tokens: u64) -> tag_usage::UsageEvent {
+        tag_usage::UsageEvent {
+            agent: "claude".into(),
+            session_id: session.into(),
+            step_id: None,
+            project: None,
+            model: "claude-sonnet-4".into(),
+            input_tokens: tokens,
+            output_tokens: tokens,
+            cache_read: 0,
+            cache_write: 0,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn usage_is_charged_to_the_run_and_pauses_at_budget() {
+        let (mut state, _rx) = test_state();
+        let mut run = Run::new("r_test_0001", "p", "goal", chrono::Utc::now());
+        run.state = RunState::Running;
+        run.budget_usd = 1.0;
+        let mut t = Task::new("t1", "x", "y");
+        t.state = TaskState::Working;
+        t.pane = Some(7);
+        run.tasks.push(t);
+        state.runs.insert(
+            run.id.clone(),
+            ActiveRun {
+                store: RunStore::new(state.paths.state_dir.join("runs")),
+                run,
+                repo: state.paths.state_dir.clone(),
+                settings: OrchestrationSettings::builtin(),
+                announced_all_review: false,
+            },
+        );
+        state.pane_meta.insert(
+            PaneId(7),
+            PaneMeta {
+                run: Some("r_test_0001".into()),
+                session_id: Some("sess-1".into()),
+                ..Default::default()
+            },
+        );
+        // Another session's usage isn't charged.
+        assert!(attribute_usage(&mut state, &[usage("other", 10_000_000)]).is_empty());
+        assert_eq!(state.runs["r_test_0001"].run.spent_usd, 0.0);
+
+        let small = attribute_usage(&mut state, &[usage("sess-1", 1_000)]);
+        assert!(small.is_empty());
+        let spent = state.runs["r_test_0001"].run.spent_usd;
+        assert!(spent > 0.0 && spent < 1.0, "{spent}");
+        assert_eq!(state.runs["r_test_0001"].run.state, RunState::Running);
+
+        let big = attribute_usage(&mut state, &[usage("sess-1", 10_000_000)]);
+        assert_eq!(big, vec!["r_test_0001".to_string()]);
+        let a = &state.runs["r_test_0001"];
+        assert_eq!(a.run.state, RunState::Paused);
+        // Soft budget: the running worker keeps its task.
+        assert_eq!(a.run.tasks[0].state, TaskState::Working);
+        assert!(state
+            .attention_queue
+            .items()
+            .iter()
+            .any(|i| i.message.contains("budget")));
+    }
+
+    #[test]
+    fn session_uuid_is_v4() {
+        let u = new_session_uuid();
+        assert_eq!(u.len(), 36);
+        assert_eq!(&u[14..15], "4");
+    }
 
     #[test]
     fn render_replaces_vars() {

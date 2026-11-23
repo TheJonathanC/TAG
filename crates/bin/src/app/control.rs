@@ -23,6 +23,8 @@ pub(crate) struct PaneMeta {
     pub(crate) worktree: Option<PathBuf>,
     /// Requested visibility for panes kept outside the layout (hidden/card).
     pub(crate) visibility: Option<Visibility>,
+    /// Agent conversation id TAG chose at launch (`session_id_args`), for usage attribution.
+    pub(crate) session_id: Option<String>,
 }
 
 /// Handle one control request and send its reply (possibly later, from a worker thread).

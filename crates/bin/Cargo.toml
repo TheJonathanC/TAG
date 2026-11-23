@@ -53,6 +53,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 arboard = { workspace = true }
 libc = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 tag-control = { path = "../control", version = "0.1.0" }

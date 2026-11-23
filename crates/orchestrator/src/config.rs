@@ -40,6 +40,8 @@ pub struct ProjectConfig {
     /// Per-run budget in USD (0 = unlimited).
     #[serde(default)]
     pub budget_usd: Option<f64>,
+    /// Kill running workers (not just stop new spawns) when the budget is reached.
+    pub hard_budget: Option<bool>,
     /// Paths whose changes always need human approval.
     #[serde(default)]
     pub protected_paths: Option<Vec<String>>,
@@ -80,6 +82,8 @@ pub struct OrchestrationSettings {
     pub worker_visibility: Visibility,
     /// Per-run budget in USD (0 = unlimited).
     pub budget_usd: f64,
+    /// Kill running workers when the budget is reached.
+    pub hard_budget: bool,
     /// Protected path prefixes.
     pub protected_paths: Vec<String>,
 }
@@ -105,6 +109,7 @@ impl OrchestrationSettings {
             max_workers: 4,
             worker_visibility: Visibility::Card,
             budget_usd: 0.0,
+            hard_budget: false,
             protected_paths: Vec::new(),
         }
     }
@@ -136,6 +141,7 @@ impl OrchestrationSettings {
             max_workers: pick!(max_workers).unwrap_or(builtin.max_workers),
             worker_visibility: pick!(worker_visibility).unwrap_or(builtin.worker_visibility),
             budget_usd: pick!(budget_usd).unwrap_or(builtin.budget_usd),
+            hard_budget: pick!(hard_budget).unwrap_or(builtin.hard_budget),
             protected_paths: pick!(protected_paths)
                 .unwrap_or_else(|| builtin.protected_paths.clone()),
         }

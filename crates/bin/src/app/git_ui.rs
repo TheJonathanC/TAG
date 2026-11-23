@@ -422,6 +422,7 @@ pub(crate) fn request_git_refresh(state: &mut AppState) {
 pub(crate) fn drain_background_results(state: &mut AppState) {
     let mut usage_changed = false;
     while let Ok(events) = state.usage_rx.try_recv() {
+        attribute_usage(state, &events);
         if state.usage_store.insert_events_batch(&events).unwrap_or(0) > 0 {
             usage_changed = true;
         }

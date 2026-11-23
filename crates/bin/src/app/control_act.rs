@@ -243,6 +243,7 @@ pub(crate) fn spawn_pane_now(
     };
     let pid = state.allocate_pane_id();
     let mut typed_prompt = None;
+    let mut session_id: Option<String> = None;
 
     let pane: Box<dyn tag_core::pane::Pane> = if p.profile == "shell" {
         let mut shell_env = vault_env(state);
@@ -282,6 +283,11 @@ pub(crate) fn spawn_pane_now(
             mcp_config_path: extras.mcp_config_path.clone(),
             ..Default::default()
         };
+        if !cfg.session_id_args.is_empty() {
+            let id = new_session_uuid();
+            opts.new_session_id = Some(id.clone());
+            session_id = Some(id);
+        }
         match cfg.prompt_delivery {
             PromptDelivery::Arg => opts.prompt = p.prompt.clone(),
             PromptDelivery::Type | PromptDelivery::Stdin => typed_prompt = p.prompt.clone(),
@@ -310,7 +316,7 @@ pub(crate) fn spawn_pane_now(
                 let mut pane = pane;
                 pane_write(&mut pane, &text, true);
                 state.panes.insert(pid, Box::new(pane));
-                return finish_spawn(state, pid, p, worktree, worktree_path);
+                return finish_spawn(state, pid, p, worktree, worktree_path, session_id);
             }
         }
         Box::new(pane)
@@ -325,7 +331,7 @@ pub(crate) fn spawn_pane_now(
             },
         );
     }
-    finish_spawn(state, pid, p, worktree, worktree_path)
+    finish_spawn(state, pid, p, worktree, worktree_path, session_id)
 }
 
 fn finish_spawn(
@@ -334,6 +340,7 @@ fn finish_spawn(
     p: SpawnParams,
     worktree: Option<WorktreeInfo>,
     worktree_path: Option<PathBuf>,
+    session_id: Option<String>,
 ) -> Result<SpawnResult, ControlError> {
     state.pane_meta.insert(
         pid,
@@ -343,6 +350,7 @@ fn finish_spawn(
             task: p.task.clone(),
             worktree: worktree_path,
             visibility: Some(p.visibility),
+            session_id,
         },
     );
     place_pane(state, pid, p.visibility, p.workspace);
@@ -352,6 +360,22 @@ fn finish_spawn(
         pane: pid.0,
         worktree,
     })
+}
+
+/// A random RFC 4122 version-4 UUID string.
+pub(crate) fn new_session_uuid() -> String {
+    let mut b: [u8; 16] = rand::random();
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
 }
 
 /// Put a pane into (or take it out of) the layout according to `visibility`.

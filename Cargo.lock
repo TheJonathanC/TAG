@@ -2429,6 +2429,7 @@ dependencies = [
  "clap",
  "crossterm",
  "libc",
+ "rand",
  "ratatui",
  "serde",
  "serde_json",
