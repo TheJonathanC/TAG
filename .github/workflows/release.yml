@@ -253,6 +253,12 @@ jobs:
           cargo publish -p tag-agents
           cargo publish -p tag-applets
           cargo publish -p tag-ui
+          # Orchestration, control plane, projects and brain (tag-control needs tag-orchestrator)
+          cargo publish -p tag-orchestrator
+          cargo publish -p tag-projects
+          cargo publish -p tag-brain
+          sleep 15
+          cargo publish -p tag-control
           sleep 20
           # Publish main binary crate
           cargo publish -p tag
