@@ -2479,6 +2479,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tag-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
+]
+
+[[package]]
 name = "tag-pty"
 version = "0.1.0"
 dependencies = [
