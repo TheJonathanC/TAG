@@ -295,6 +295,7 @@ mod tests {
                 repo: state.paths.state_dir.clone(),
                 settings: OrchestrationSettings::builtin(),
                 announced_all_review: false,
+                workspace: None,
             },
         );
     }

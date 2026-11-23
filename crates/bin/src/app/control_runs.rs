@@ -27,6 +27,8 @@ pub(crate) struct ActiveRun {
     pub(crate) settings: OrchestrationSettings,
     /// Whether "all tasks ready for review" was already announced for the current set.
     pub(crate) announced_all_review: bool,
+    /// The `run:<goal>` workspace laid out for this run (T4.6), if any.
+    pub(crate) workspace: Option<tag_core::pane::WorkspaceId>,
 }
 
 fn respond<T: serde::Serialize>(v: T) -> ControlResult {
@@ -165,6 +167,7 @@ pub(crate) fn load_active_runs(state: &mut AppState) {
                     repo,
                     settings,
                     announced_all_review: false,
+                    workspace: None,
                 },
             );
         }
@@ -471,6 +474,7 @@ pub(crate) fn create_run(state: &mut AppState, p: RunCreateParams) -> Result<Run
             repo,
             settings,
             announced_all_review: false,
+            workspace: None,
         },
     );
     if p.spawn_conductor {
@@ -630,10 +634,18 @@ pub(crate) fn spawn_conductor(
     );
     let prompt = render(&template, &vars);
     let goal = state.runs[run_id].run.goal.clone();
+    // A dedicated workspace for the run: conductor left, workers on the right (T4.6).
+    let ws = state
+        .layout_mgr
+        .add_workspace(format!("run:{}", truncate(&goal, 24)));
+    state.layout_mgr.switch_workspace(ws);
+    if let Some(a) = state.runs.get_mut(run_id) {
+        a.workspace = Some(ws);
+    }
     let params = SpawnParams {
         profile: profile.to_string(),
         project: None,
-        workspace: None,
+        workspace: Some(ws.0),
         cwd: Some(repo.display().to_string()),
         worktree: None,
         prompt: Some(prompt),
@@ -653,6 +665,7 @@ pub(crate) fn spawn_conductor(
         });
     }
     commit_events(state, run_id, Vec::new());
+    arrange_run_workspace(state, run_id);
     Ok(res.pane)
 }
 
@@ -1511,15 +1524,20 @@ fn schedule(state: &mut AppState, run_id: &str) {
 
 /// Start a worker for `task`: worktree, scoped token, rendered prompt, pane.
 fn spawn_worker(state: &mut AppState, run_id: &str, task_id: &str) -> Result<(), ControlError> {
-    let (repo, run, mut vars, visibility) = {
+    let (repo, run, mut vars, mut visibility, run_ws) = {
         let a = &state.runs[run_id];
         (
             a.repo.clone(),
             a.run.clone(),
             base_vars(a),
             a.settings.worker_visibility,
+            a.workspace,
         )
     };
+    // Past MAX_TILED_WORKERS tiled workers, more go to the run workspace's card strip.
+    if visibility == Visibility::Pane && tiled_workers(state, run_id).len() >= MAX_TILED_WORKERS {
+        visibility = Visibility::Card;
+    }
     let task = run
         .task(task_id)
         .cloned()
@@ -1567,6 +1585,8 @@ fn spawn_worker(state: &mut AppState, run_id: &str, task_id: &str) -> Result<(),
         run: Some(run_id.to_string()),
         task: Some(task_id.to_string()),
     };
+    let mut params = params;
+    params.workspace = run_ws.map(|w| w.0);
     let extras = SpawnExtras {
         env: run_env(state, &token, run_id, Some(task_id)),
         ..Default::default()
@@ -1593,7 +1613,93 @@ fn spawn_worker(state: &mut AppState, run_id: &str, task_id: &str) -> Result<(),
         );
         Ok(())
     })?;
+    arrange_run_workspace(state, run_id);
     Ok(())
+}
+
+/// Tiled worker panes shown alongside the conductor.
+const MAX_TILED_WORKERS: usize = 3;
+
+/// Worker panes of `run_id` currently tiled in its workspace, in task order.
+fn tiled_workers(state: &AppState, run_id: &str) -> Vec<PaneId> {
+    let Some(a) = state.runs.get(run_id) else {
+        return Vec::new();
+    };
+    let Some(ws) = a
+        .workspace
+        .and_then(|id| state.layout_mgr.workspaces().iter().find(|w| w.id == id))
+    else {
+        return Vec::new();
+    };
+    let tiled = ws.all_panes();
+    a.run
+        .tasks
+        .iter()
+        .filter_map(|t| t.pane.map(|p| PaneId(p as u32)))
+        .filter(|p| tiled.contains(p))
+        .collect()
+}
+
+/// Lay out the run workspace: conductor on the left (60%), tiled workers stacked on the right.
+pub(crate) fn arrange_run_workspace(state: &mut AppState, run_id: &str) {
+    use tag_core::action::SplitDirection;
+    use tag_layout::LayoutNode;
+    let Some(a) = state.runs.get(run_id) else {
+        return;
+    };
+    let Some(ws_id) = a.workspace else { return };
+    let conductor = a
+        .run
+        .conductor
+        .as_ref()
+        .and_then(|c| c.pane)
+        .map(|p| PaneId(p as u32))
+        .filter(|p| state.panes.contains_key(p));
+    let workers = tiled_workers(state, run_id);
+    let Some(ws) = state.layout_mgr.find_workspace_mut(ws_id) else {
+        return;
+    };
+    let tiled = ws.all_panes();
+    let conductor = conductor.filter(|c| tiled.contains(c));
+    // Other panes the user put here stay, appended to the worker column.
+    let mut column = workers.clone();
+    column.extend(
+        tiled
+            .iter()
+            .copied()
+            .filter(|p| Some(*p) != conductor && !workers.contains(p)),
+    );
+    fn stack(panes: &[PaneId]) -> Option<LayoutNode> {
+        match panes {
+            [] => None,
+            [one] => Some(LayoutNode::leaf(*one)),
+            [first, rest @ ..] => Some(LayoutNode::Split {
+                direction: SplitDirection::Horizontal,
+                ratio: 1.0 / panes.len() as f32,
+                first: Box::new(LayoutNode::leaf(*first)),
+                second: Box::new(stack(rest)?),
+            }),
+        }
+    }
+    let root = match (conductor, stack(&column)) {
+        (Some(c), Some(right)) => Some(LayoutNode::Split {
+            direction: SplitDirection::Vertical,
+            ratio: 0.6,
+            first: Box::new(LayoutNode::leaf(c)),
+            second: Box::new(right),
+        }),
+        (Some(c), None) => Some(LayoutNode::leaf(c)),
+        (None, right) => right,
+    };
+    if root.is_some() {
+        ws.root = root;
+        ws.zoomed_pane = None;
+        if ws.focused_pane.is_none_or(|f| !ws.all_panes().contains(&f)) {
+            ws.focused_pane = conductor.or(column.first().copied());
+        }
+    }
+    state.needs_clear = true;
+    state.is_dirty = true;
 }
 
 #[cfg(test)]
@@ -1634,6 +1740,7 @@ mod tests {
                 repo: state.paths.state_dir.clone(),
                 settings: OrchestrationSettings::builtin(),
                 announced_all_review: false,
+                workspace: None,
             },
         );
         state.pane_meta.insert(
@@ -1681,6 +1788,7 @@ mod tests {
                 repo: state.paths.state_dir.clone(),
                 settings: OrchestrationSettings::builtin(),
                 announced_all_review: false,
+                workspace: None,
             },
         );
         raise_attention(
@@ -1715,6 +1823,71 @@ mod tests {
             .toasts
             .iter()
             .any(|t| t.message.contains("Approve r_test_0002")));
+    }
+
+    #[test]
+    fn run_workspace_puts_conductor_left_and_workers_right() {
+        use crate::app::state::tests::MockAgentPane;
+        let (mut state, _rx) = test_state();
+        let ws = state.layout_mgr.add_workspace("run:x");
+        let mut run = Run::new("r_test_0003", "p", "goal", chrono::Utc::now());
+        run.state = RunState::Running;
+        run.conductor = Some(ConductorRef {
+            profile: "c".into(),
+            pane: Some(1),
+        });
+        for i in 0..5u64 {
+            let mut t = Task::new(format!("t{i}"), "x", "y");
+            t.state = TaskState::Working;
+            t.pane = Some(10 + i);
+            run.tasks.push(t);
+        }
+        state.runs.insert(
+            run.id.clone(),
+            ActiveRun {
+                store: RunStore::new(state.paths.state_dir.join("runs")),
+                run,
+                repo: state.paths.state_dir.clone(),
+                settings: OrchestrationSettings::builtin(),
+                announced_all_review: false,
+                workspace: Some(ws),
+            },
+        );
+        for id in [1u32, 10, 11, 12, 13, 14] {
+            state.panes.insert(
+                PaneId(id),
+                Box::new(MockAgentPane {
+                    id: PaneId(id),
+                    status: "running",
+                }),
+            );
+        }
+        for id in [1u32, 10, 11, 12] {
+            place_pane(&mut state, PaneId(id), Visibility::Pane, Some(ws.0));
+        }
+        place_pane(&mut state, PaneId(13), Visibility::Card, Some(ws.0));
+        arrange_run_workspace(&mut state, "r_test_0003");
+        let w = state
+            .layout_mgr
+            .workspaces()
+            .iter()
+            .find(|w| w.id == ws)
+            .unwrap();
+        let rects = w.compute_rects(ratatui::layout::Rect::new(0, 0, 100, 30));
+        assert_eq!(rects[&PaneId(1)].x, 0);
+        assert!(
+            (58..=62).contains(&rects[&PaneId(1)].width),
+            "{:?}",
+            rects[&PaneId(1)]
+        );
+        for id in [10u32, 11, 12] {
+            assert!(rects[&PaneId(id)].x >= 58, "worker {id} on the right");
+        }
+        assert!(!rects.contains_key(&PaneId(13)), "card isn't tiled");
+        assert_eq!(
+            tiled_workers(&state, "r_test_0003").len(),
+            MAX_TILED_WORKERS
+        );
     }
 
     #[test]
