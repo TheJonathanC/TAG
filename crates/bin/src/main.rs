@@ -27,6 +27,25 @@ use crate::{app::*, cli::*, session_io::*, sockets::*, tmux::*};
 fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
 
+    if let Some(Commands::Daemon {
+        socket_dir,
+        state_dir,
+        config,
+    }) = cli.command
+    {
+        let defaults = AppPaths::user_default();
+        let paths = AppPaths::isolated(
+            config,
+            state_dir.unwrap_or(defaults.state_dir),
+            socket_dir.unwrap_or(defaults.socket_dir),
+        );
+        std::env::set_var("TAG_ACTIVE", "1");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        return runtime.block_on(run_daemon(paths));
+    }
+
     if let Some(Commands::Brain { cmd }) = cli.command {
         return brain_cli::handle_brain_command(cmd);
     }

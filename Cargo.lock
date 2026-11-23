@@ -2447,6 +2447,7 @@ dependencies = [
  "tag-ui",
  "tag-usage",
  "tag-vault",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",

@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-// TODO(T1.0): remove once `tag daemon` uses the isolated paths and control socket.
-#[allow(dead_code)]
 /// Filesystem locations used by a running TAG instance.
 ///
 /// The UI uses [`AppPaths::user_default`]. `tag daemon` and tests override the state and socket
@@ -22,7 +20,6 @@ pub(crate) struct AppPaths {
     pub(crate) socket_dir: PathBuf,
 }
 
-#[allow(dead_code)]
 impl AppPaths {
     /// Paths for the interactive UI, rooted in the user's home directory.
     pub(crate) fn user_default() -> Self {

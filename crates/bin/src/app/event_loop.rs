@@ -383,3 +383,58 @@ pub(crate) fn spawn_signal_listener(event_tx: UnboundedSender<AppEvent>) {
         let _ = sig_tx.send(AppEvent::Action(Action::Quit));
     });
 }
+
+/// Headless mode (`tag daemon`): the same state and event handling as the UI, with no
+/// terminal rendering or input. Serves the hook and control sockets until SIGTERM/SIGINT,
+/// then saves the session and stops its panes.
+pub(crate) async fn run_daemon(paths: AppPaths) -> Result<(), anyhow::Error> {
+    ensure_private_dir(&paths.socket_dir);
+    std::fs::create_dir_all(&paths.state_dir)?;
+    let (event_tx, mut event_rx) = unbounded_channel::<AppEvent>();
+
+    let hook_path = paths.hook_socket_path();
+    std::env::set_var("COCKPIT_SOCK", &hook_path);
+    let hook_server = HookServer::new(hook_path.clone());
+    hook_server.start(event_tx.clone()).await?;
+
+    let (config, config_error) = load_app_config(&paths.config_path);
+    if let Some(err) = &config_error {
+        eprintln!("tag daemon: config error, using defaults: {err}");
+    }
+    let usage_rx = spawn_usage_scanner(dirs_or_home());
+    let mut state = AppState::new(config, config_error, paths, event_tx.clone(), usage_rx)?;
+    if let Some(err) = state.start_control_server().await {
+        let _ = std::fs::remove_file(&hook_path);
+        anyhow::bail!(err);
+    }
+    // Hidden panes are sized 120x40 until shown (§5.4).
+    state.term_width = 122;
+    state.term_height = 44;
+    restore_session(&mut state, 122, 44);
+
+    spawn_tick(event_tx.clone());
+    spawn_signal_listener(event_tx.clone());
+    eprintln!(
+        "tag daemon: control socket {}",
+        state
+            .control_server
+            .as_ref()
+            .map(|s| s.path().display().to_string())
+            .unwrap_or_else(|| "disabled".into())
+    );
+
+    while let Some(event) = event_rx.recv().await {
+        // Terminal-only events never arrive in daemon mode.
+        if handle_app_event(&mut state, event) {
+            break;
+        }
+    }
+
+    save_session_to_disk(&state);
+    for pane in state.panes.values_mut() {
+        pane.kill();
+    }
+    state.control_server = None;
+    let _ = std::fs::remove_file(hook_path);
+    Ok(())
+}

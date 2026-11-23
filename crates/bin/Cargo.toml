@@ -52,3 +52,6 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 arboard = { workspace = true }
 libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

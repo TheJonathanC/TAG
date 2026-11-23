@@ -397,7 +397,27 @@ tag vault set OPENAI_API_KEY "sk-..." # Or provide inline / piped
 tag vault list                       # List all stored secret keys
 tag vault get ANTHROPIC_API_KEY      # Retrieve secret value
 tag vault remove ANTHROPIC_API_KEY   # Delete secret from vault
+
+# Run headless (no UI): serves the hook and control sockets for `tag ctl` / `tag mcp`.
+# Session is kept in the state dir (~/.local/state/tag), separate from the UI's session.
+tag daemon [--socket-dir DIR] [--state-dir DIR] [--config FILE]
 ```
+
+The UI and the daemon both serve a **control socket** (`tag-control-<pid>.sock`, next to the hook
+socket, mode `0600`) speaking newline-delimited JSON-RPC 2.0. `tag ctl` and `tag mcp` are thin
+clients of it. Client permissions are configured in `config.toml`:
+
+```toml
+[control]
+enabled = true
+
+[control.clients.claude-desktop]
+tiers = ["read", "act"]          # "dangerous" (merge, kill, approve) stays with the human
+```
+
+Built-in defaults: `ctl` gets `read`/`act`/`dangerous`, `mcp` and `claude-desktop` get `read`/`act`,
+any other client name gets `read`. Act and dangerous calls are logged to
+`~/.local/state/tag/control-audit.jsonl`.
 
 ### `cockpit-notify` / `tag-notify`
 IPC helper binary called by agent hooks to post events to TAG's Unix domain socket.

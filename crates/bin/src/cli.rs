@@ -49,6 +49,18 @@ pub(crate) enum Commands {
         #[arg(long)]
         beta: bool,
     },
+    /// Run TAG headless: no UI, serves the hook and control sockets (for `tag ctl`/`tag mcp`)
+    Daemon {
+        /// Directory for the hook and control sockets
+        #[arg(long)]
+        socket_dir: Option<PathBuf>,
+        /// State directory (session, runs, audit log)
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Config file (default ~/.config/tag/config.toml)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Pin patterns and search the project/global brain
     Brain {
         #[command(subcommand)]
