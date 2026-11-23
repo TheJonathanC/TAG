@@ -3,6 +3,7 @@
 pub(crate) mod actions;
 pub(crate) mod control;
 pub(crate) mod control_act;
+pub(crate) mod control_brain;
 pub(crate) mod control_danger;
 pub(crate) mod control_runs;
 pub(crate) mod event_loop;
@@ -19,6 +20,7 @@ pub(crate) mod tray;
 pub(crate) use actions::*;
 pub(crate) use control::*;
 pub(crate) use control_act::*;
+pub(crate) use control_brain::*;
 pub(crate) use control_danger::*;
 pub(crate) use control_runs::*;
 pub(crate) use event_loop::*;

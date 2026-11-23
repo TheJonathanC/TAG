@@ -596,3 +596,5 @@ tag brain show pat_jwt-middleware                  # document, links and backlin
 tag brain search "refresh token" [--kind K] [--limit N]
 tag brain rm pat_jwt-middleware                    # delete the file
 ```
+
+Agents can use the brain over the control socket (`tag ctl` or MCP): `brain.search`, `brain.get` (by id, or a project's brief), `brain.get_pattern` (pattern plus its source files at the pinned commit), `brain.import_pattern` (copies a pattern's files and `PATTERN.md` into `<worktree>/.tag/ref/<id>/`, git-excluded) and `brain.note` (write a note, decision or pattern into the project brain).
