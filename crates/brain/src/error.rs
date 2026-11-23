@@ -9,6 +9,9 @@ pub enum Error {
     /// SQLite error.
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    /// Invalid input or environment (bad path, not a git repo, ...).
+    #[error("{0}")]
+    Invalid(String),
     /// Invalid YAML frontmatter.
     #[error("invalid frontmatter in {}: {msg}", path.display())]
     Frontmatter {

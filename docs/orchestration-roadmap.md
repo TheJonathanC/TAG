@@ -372,7 +372,7 @@ Group items by run. Quick actions inline: approve plan, approve merge, reply. Ea
 | P2 Orchestration | T2.1 profile extensions · T2.2 visibility · T2.3 completion detection · T2.4 `tag-orchestrator` · T2.5 run methods + wiring · T2.6 prompts + `tag orchestrate` · T2.7 budgets |
 | P3 Projects | T3.1 registry · T3.2 per-project sessions · T3.3 resume · T3.4 project switcher · T3.5 navigation keys |
 | P4 Multi-agent UI | T4.1 workers table · T4.2 run view · T4.3 peek · T4.4 card strip · T4.5 attention grouping · T4.6 run auto-layout |
-| P5 Brain | T5.1 `tag-brain` · T5.2 `tag brain init` · T5.3 `tag brain pin` · T5.4 brain methods · T5.5 context injection · T5.6 brain views + graph · T5.7 post-run notes |
+| P5 Brain | T5.1 `tag-brain` · T5.2 `tag brain init` · T5.3 `tag brain pin/ls/show/rm/search` · T5.4 brain methods · T5.5 context injection · T5.6 brain views + graph · T5.7 post-run notes |
 | P6 Hardening | T6.1 HTTP MCP · T6.2 security review · T6.3 ADRs + beta bump |
 
 Full task text (acceptance criteria, dependencies, waves, risks, definition of done) is kept in the original plan handed to the implementing agents; `docs/orchestration-progress.md` records status and deviations per task.
