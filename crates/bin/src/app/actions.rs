@@ -333,7 +333,15 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
             }
             let pid = state.allocate_pane_id();
             if let Some(prof_cfg) = state.config.agents.get(&profile).cloned() {
-                let prof = AgentProfile::from_config(&prof_cfg);
+                let mut prof = AgentProfile::from_config(&prof_cfg);
+                // Let TAG choose the conversation id so the pane can resume after a restart.
+                let session_id = (!prof_cfg.session_id_args.is_empty()).then(new_session_uuid);
+                let (command, args) = prof_cfg.build_argv(&tag_core::config::LaunchOpts {
+                    new_session_id: session_id.clone(),
+                    ..Default::default()
+                });
+                prof.command = command;
+                prof.args = args;
                 let (w, h) = if state.term_width > 0 && state.term_height > 0 {
                     (
                         state.term_width.saturating_sub(2),
@@ -353,6 +361,14 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
                 ) {
                     Ok(agent_pane) => {
                         state.panes.insert(pid, Box::new(agent_pane));
+                        state.pane_meta.insert(
+                            pid,
+                            PaneMeta {
+                                profile: Some(profile.clone()),
+                                session_id,
+                                ..Default::default()
+                            },
+                        );
                         let _ = state
                             .layout_mgr
                             .active_workspace_mut()

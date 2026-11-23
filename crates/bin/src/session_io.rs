@@ -102,6 +102,8 @@ fn saved_pane(state: &AppState, pid: PaneId, pane: &dyn Pane) -> SavedPane {
         command,
         args,
         visibility,
+        profile: state.pane_meta.get(&pid).and_then(|m| m.profile.clone()),
+        resume: state.pane_meta.get(&pid).and_then(|m| m.session_id.clone()),
     }
 }
 

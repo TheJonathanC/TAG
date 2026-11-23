@@ -213,6 +213,61 @@ fn spawn_saved_pane(
         return state.panes.contains_key(&pid);
     }
 
+    // Agent panes TAG launched from a profile: relaunch through the profile, resuming the
+    // conversation when the profile supports it.
+    if let Some(cfg) = sp
+        .profile
+        .as_ref()
+        .and_then(|p| state.config.agents.get(p))
+        .cloned()
+        .filter(|_| sp.command.as_deref() != Some("tmux"))
+    {
+        let profile_key = sp.profile.clone().unwrap_or_default();
+        let (opts, session_id, fresh) = resume_launch(&cfg, sp.resume.as_deref());
+        if fresh {
+            state.toasts.push(tag_ui::Toast {
+                title: "Agent Restarted".into(),
+                message: format!(
+                    "{} can't resume conversations; started a fresh session",
+                    cfg.name
+                ),
+                level: tag_ui::ToastLevel::Info,
+                created_at: chrono::Utc::now(),
+                duration_secs: 5,
+            });
+        }
+        let (command, args) = cfg.build_argv(&opts);
+        let mut prof = tag_agents::AgentProfile::from_config(&cfg);
+        prof.command = command;
+        prof.args = args;
+        prof.env.extend(env);
+        prof.default_cwd = sp.cwd.clone();
+        prof.name = sp.title.clone();
+        return match tag_agents::AgentPane::spawn(
+            pid,
+            &prof,
+            None,
+            width.saturating_sub(2),
+            height.saturating_sub(4),
+            state.config.scrollback_lines,
+            state.event_tx.clone(),
+        ) {
+            Ok(pane) => {
+                state.panes.insert(pid, Box::new(pane));
+                state.pane_meta.insert(
+                    pid,
+                    PaneMeta {
+                        profile: Some(profile_key),
+                        session_id,
+                        ..Default::default()
+                    },
+                );
+                true
+            }
+            Err(_) => false,
+        };
+    }
+
     let mut cmd = sp.command;
     let mut args = sp.args;
     let mut title = sp.title;
@@ -283,6 +338,27 @@ fn spawn_saved_pane(
             true
         }
         Err(_) => false,
+    }
+}
+
+/// How to relaunch a saved agent pane: resume `saved` with the profile's `resume_args` when it
+/// has them; otherwise start fresh (with a new TAG-chosen id when the profile supports one).
+/// Returns (launch options, session id to record, whether a resume was wanted but impossible).
+pub(crate) fn resume_launch(
+    cfg: &tag_core::config::AgentProfileConfig,
+    saved: Option<&str>,
+) -> (tag_core::config::LaunchOpts, Option<String>, bool) {
+    let mut opts = tag_core::config::LaunchOpts::default();
+    match saved {
+        Some(id) if !cfg.resume_args.is_empty() => {
+            opts.resume_session = Some(id.to_string());
+            (opts, Some(id.to_string()), false)
+        }
+        _ => {
+            let id = (!cfg.session_id_args.is_empty()).then(new_session_uuid);
+            opts.new_session_id = id.clone();
+            (opts, id, saved.is_some())
+        }
     }
 }
 
@@ -518,4 +594,36 @@ pub(crate) async fn run_daemon(paths: AppPaths) -> Result<(), anyhow::Error> {
     state.control_server = None;
     let _ = std::fs::remove_file(hook_path);
     Ok(())
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    #[test]
+    fn restore_builds_resume_argv() {
+        let cfg = tag_core::config::Config::default().agents["claude"].clone();
+        let (opts, id, fresh) = resume_launch(&cfg, Some("abc-123"));
+        assert!(!fresh);
+        assert_eq!(id.as_deref(), Some("abc-123"));
+        let (cmd, args) = cfg.build_argv(&opts);
+        assert_eq!(cmd, "claude");
+        let i = args.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(args[i + 1], "abc-123");
+        assert!(!args.iter().any(|a| a == "--session-id"));
+    }
+
+    #[test]
+    fn profile_without_resume_starts_fresh() {
+        let mut cfg = tag_core::config::Config::default().agents["claude"].clone();
+        cfg.resume_args.clear();
+        let (opts, id, fresh) = resume_launch(&cfg, Some("abc-123"));
+        assert!(fresh);
+        // Still gets a new TAG-chosen id so the next restart can resume.
+        let (_, args) = cfg.build_argv(&opts);
+        let i = args.iter().position(|a| a == "--session-id").unwrap();
+        assert_eq!(Some(&args[i + 1]), id.as_ref());
+        // Nothing saved, nothing to report.
+        assert!(!resume_launch(&cfg, None).2);
+    }
 }

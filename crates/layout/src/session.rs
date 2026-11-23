@@ -21,6 +21,12 @@ pub struct SavedPane {
     /// `"hidden"`, `"card"` or `"pane"`; `None` for ordinary tiled panes.
     #[serde(default)]
     pub visibility: Option<String>,
+    /// Agent profile key (config `[agents.<key>]`) for agent panes TAG launched.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Agent conversation id to resume on restore (via the profile's `resume_args`).
+    #[serde(default)]
+    pub resume: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +147,8 @@ mod tests {
                 command: Some("htop".into()),
                 args: vec!["-d".into(), "10".into()],
                 visibility: Some("card".into()),
+                profile: None,
+                resume: None,
             },
         );
 

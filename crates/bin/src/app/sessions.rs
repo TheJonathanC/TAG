@@ -174,6 +174,8 @@ mod tests {
             command: Some("sleep".into()),
             args: vec!["30".into()],
             visibility: None,
+            profile: None,
+            resume: None,
         }
     }
 

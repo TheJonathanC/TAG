@@ -172,6 +172,8 @@ pub fn seed_shell_session(state_dir: &Path, script: &str) {
             command: Some("sh".into()),
             args: vec!["-c".into(), script.into()],
             visibility: None,
+            profile: None,
+            resume: None,
         },
     );
     s.save_to_file(&state_dir.join("session.json")).unwrap();
