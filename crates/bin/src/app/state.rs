@@ -108,6 +108,10 @@ pub(crate) struct AppState {
     pub(crate) runs: HashMap<String, ActiveRun>,
     /// Goal being typed for `^Space o` (orchestrate), when the prompt is open.
     pub(crate) goal_prompt: Option<String>,
+    /// Quick actions attached to attention items, by item id.
+    pub(crate) attention_actions: HashMap<u64, AttentionAction>,
+    /// Text being typed as a reply to a pane (attention quick action `r`).
+    pub(crate) reply_prompt: Option<(PaneId, String)>,
     /// Registry of known projects (git repo roots), persisted in the state dir.
     pub(crate) projects: tag_projects::ProjectRegistry,
     /// Set when `projects.json` failed to parse; saving is skipped so it is never overwritten.
@@ -209,6 +213,8 @@ impl AppState {
             test_results: HashMap::new(),
             runs: HashMap::new(),
             goal_prompt: None,
+            attention_actions: HashMap::new(),
+            reply_prompt: None,
             projects,
             projects_load_error,
             active_project_name: None,

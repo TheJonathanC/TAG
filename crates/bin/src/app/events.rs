@@ -165,6 +165,27 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
         }
         AppEvent::TerminalInput(CrossEvent::Key(key)) => {
             state.is_dirty = true;
+            if let Some((pane, ref mut text)) = state.reply_prompt {
+                match key.code {
+                    KeyCode::Enter => {
+                        let text = text.clone();
+                        state.reply_prompt = None;
+                        if let Some(p) = state.panes.get_mut(&pane) {
+                            pane_write(p.as_mut(), &text, true);
+                        }
+                    }
+                    KeyCode::Esc => state.reply_prompt = None,
+                    KeyCode::Backspace => {
+                        text.pop();
+                    }
+                    _ => {
+                        if let Some(c) = text_input_char(&key) {
+                            text.push(c);
+                        }
+                    }
+                }
+                return false;
+            }
             if let Some(ref mut goal) = state.goal_prompt {
                 match key.code {
                     KeyCode::Enter => {
@@ -335,12 +356,27 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                                 (state.attention_state.selected_index + 1).min(count - 1);
                         }
                     }
+                    KeyCode::Char(c @ ('p' | 'm' | 'r')) => {
+                        let id = tag_notify::selected_item(
+                            &state.attention_queue,
+                            &state.attention_state,
+                        )
+                        .map(|i| i.id);
+                        if let Some(id) = id {
+                            if run_attention_action(state, id, c) {
+                                state.attention_state.selected_index = 0;
+                                if c == 'r' {
+                                    state.attention_state.is_open = false;
+                                }
+                            }
+                        }
+                    }
                     KeyCode::Enter => {
-                        let item = state
-                            .attention_queue
-                            .items()
-                            .get(state.attention_state.selected_index)
-                            .cloned();
+                        let item = tag_notify::selected_item(
+                            &state.attention_queue,
+                            &state.attention_state,
+                        )
+                        .cloned();
                         if let Some(item) = item {
                             match item.pane_id {
                                 Some(pid) => {
@@ -365,11 +401,11 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                     }
                     KeyCode::Char('x') | KeyCode::Char('d') | KeyCode::Delete => {
                         // Dismiss the selected alert without jumping to it
-                        let id = state
-                            .attention_queue
-                            .items()
-                            .get(state.attention_state.selected_index)
-                            .map(|i| i.id);
+                        let id = tag_notify::selected_item(
+                            &state.attention_queue,
+                            &state.attention_state,
+                        )
+                        .map(|i| i.id);
                         if let Some(id) = id {
                             state.attention_queue.clear_item(id);
                         }

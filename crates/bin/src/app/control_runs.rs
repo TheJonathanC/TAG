@@ -69,6 +69,21 @@ pub(crate) fn handle_runs(
         "task.report" => parse_params(params).and_then(|p| task_report(state, client, p)),
         "run.approve_plan" => parse_params(params).and_then(|p| approve_plan(state, client, p)),
         "run.cancel" => parse_params(params).and_then(|p| run_cancel(state, client, p)),
+        "_internal.toast" => {
+            let ok = params["ok"].as_bool().unwrap_or(false);
+            push_toast(
+                state,
+                if ok { "Done" } else { "Failed" },
+                params["message"].as_str().unwrap_or("").to_string(),
+                if ok {
+                    tag_ui::ToastLevel::Success
+                } else {
+                    tag_ui::ToastLevel::Error
+                },
+                5,
+            );
+            Ok(Value::Null)
+        }
         "_internal.merged" => {
             if let Some(path) = params["worktree"].as_str() {
                 on_merged(
@@ -228,8 +243,32 @@ fn notify_conductor(state: &mut AppState, run_id: &str, text: &str) {
     }
 }
 
-/// Raise an attention item for the human.
-fn raise_attention(state: &mut AppState, run_id: &str, pane: Option<PaneId>, message: String) {
+/// A one-key action offered on an attention item.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum AttentionAction {
+    ApprovePlan { run: String },
+    Merge { run: String, task: String },
+    Reply { pane: PaneId },
+}
+
+impl AttentionAction {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            AttentionAction::ApprovePlan { .. } => "[p] approve plan",
+            AttentionAction::Merge { .. } => "[m] merge",
+            AttentionAction::Reply { .. } => "[r] reply",
+        }
+    }
+}
+
+/// Raise an attention item for the human, optionally with a quick action.
+fn raise_attention(
+    state: &mut AppState,
+    run_id: &str,
+    pane: Option<PaneId>,
+    message: String,
+    action: Option<AttentionAction>,
+) {
     let id = state.attention_queue.push(
         pane,
         format!("run {run_id}"),
@@ -237,6 +276,9 @@ fn raise_attention(state: &mut AppState, run_id: &str, pane: Option<PaneId>, mes
         message.clone(),
         None,
     );
+    if let Some(a) = action {
+        state.attention_actions.insert(id, a);
+    }
     state.publish(StateEvent::AttentionAdded {
         item: id,
         pane,
@@ -428,6 +470,68 @@ pub(crate) fn create_run(state: &mut AppState, p: RunCreateParams) -> Result<Run
         spawn_conductor(state, &id, &conductor_profile)?;
     }
     Ok(state.runs[&id].run.clone())
+}
+
+/// Run a control method on behalf of the UI; its result comes back as a toast.
+pub(crate) fn ui_call(state: &mut AppState, method: &str, params: Value, label: &str) {
+    let (reply, rx) = ReplyHandle::new();
+    let tx = state.event_tx.clone();
+    let label = label.to_string();
+    std::thread::spawn(move || {
+        let res = rx.blocking_recv();
+        let (ok, message) = match res {
+            Ok(Ok(_)) => (true, format!("{label}: done")),
+            Ok(Err(e)) => (false, format!("{label}: {}", e.message)),
+            Err(_) => (false, format!("{label}: no answer")),
+        };
+        let (r, _rx) = ReplyHandle::new();
+        continue_in_loop(
+            &tx,
+            internal_ctx(),
+            "_internal.toast",
+            json!({"ok": ok, "message": message}),
+            r,
+        );
+    });
+    continue_in_loop(
+        &state.event_tx.clone(),
+        internal_ctx(),
+        method,
+        params,
+        reply,
+    );
+}
+
+/// Carry out the quick action attached to attention item `id`. Returns false if it has none.
+pub(crate) fn run_attention_action(state: &mut AppState, id: u64, key: char) -> bool {
+    let Some(action) = state.attention_actions.get(&id).cloned() else {
+        return false;
+    };
+    match (key, action) {
+        ('p', AttentionAction::ApprovePlan { run }) => {
+            ui_call(
+                state,
+                "run.approve_plan",
+                json!({ "run": run }),
+                &format!("Approve {run}"),
+            );
+        }
+        ('m', AttentionAction::Merge { run, task }) => {
+            ui_call(
+                state,
+                "worktree.merge",
+                json!({ "run": run, "task": task }),
+                &format!("Merge {task}"),
+            );
+        }
+        ('r', AttentionAction::Reply { pane }) => {
+            state.reply_prompt = Some((pane, String::new()));
+        }
+        _ => return false,
+    }
+    state.attention_queue.clear_item(id);
+    state.attention_actions.remove(&id);
+    true
 }
 
 /// `^Space o`: start a run with project defaults and spawn its conductor.
@@ -649,6 +753,7 @@ fn task_add(state: &mut AppState, client: &ClientCtx, p: TaskAddParams) -> Contr
                 truncate(&goal, 60),
                 p.run
             ),
+            Some(AttentionAction::ApprovePlan { run: p.run.clone() }),
         );
     }
     respond(task)
@@ -797,6 +902,9 @@ fn task_report(state: &mut AppState, client: &ClientCtx, p: TaskReportParams) ->
                 &run_id,
                 pane.map(|p| PaneId(p as u32)),
                 format!("Task {task_id} is blocked: {}", one_line(&p.summary)),
+                pane.map(|p| AttentionAction::Reply {
+                    pane: PaneId(p as u32),
+                }),
             );
         }
     }
@@ -989,6 +1097,10 @@ pub(crate) fn run_merge_gate(
         format!(
             "Merge task {task_id} of run {run_id}? ({why}) `tag ctl call worktree.merge '{{\"run\":\"{run_id}\",\"task\":\"{task_id}\"}}'`"
         ),
+        Some(AttentionAction::Merge {
+            run: run_id.clone(),
+            task: task_id.clone(),
+        }),
     );
     Some(respond(MergeResult {
         merged_commit: String::new(),
@@ -1301,6 +1413,9 @@ fn schedule(state: &mut AppState, run_id: &str) {
                         "Run {run_id} paused: budget reached (${spent:.2} of ${budget:.2}){}. Resume with run.approve_plan.",
                         if hard { "; workers stopped" } else { "; running workers continue" }
                     ),
+                    Some(AttentionAction::ApprovePlan {
+                        run: run_id.to_string(),
+                    }),
                 );
                 notify_conductor(
                     state,
@@ -1482,6 +1597,56 @@ mod tests {
             .items()
             .iter()
             .any(|i| i.message.contains("budget")));
+    }
+
+    #[test]
+    fn attention_quick_action_approves_plan() {
+        let (mut state, mut rx) = test_state();
+        let mut run = Run::new("r_test_0002", "p", "goal", chrono::Utc::now());
+        run.state = RunState::AwaitingApproval;
+        run.tasks.push(Task::new("t1", "x", "y"));
+        state.runs.insert(
+            run.id.clone(),
+            ActiveRun {
+                store: RunStore::new(state.paths.state_dir.join("runs")),
+                run,
+                repo: state.paths.state_dir.clone(),
+                settings: OrchestrationSettings::builtin(),
+                announced_all_review: false,
+            },
+        );
+        raise_attention(
+            &mut state,
+            "r_test_0002",
+            None,
+            "approve?".into(),
+            Some(AttentionAction::ApprovePlan {
+                run: "r_test_0002".into(),
+            }),
+        );
+        let id = state.attention_queue.items()[0].id;
+        assert!(
+            !run_attention_action(&mut state, id, 'm'),
+            "wrong key does nothing"
+        );
+        assert!(run_attention_action(&mut state, id, 'p'));
+        assert!(state.attention_queue.is_empty());
+        // Pump the loop: the approve call, then the toast continuation.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline && state.toasts.is_empty() {
+            while let Ok(ev) = rx.try_recv() {
+                handle_app_event(&mut state, ev);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_ne!(
+            state.runs["r_test_0002"].run.state,
+            RunState::AwaitingApproval
+        );
+        assert!(state
+            .toasts
+            .iter()
+            .any(|t| t.message.contains("Approve r_test_0002")));
     }
 
     #[test]

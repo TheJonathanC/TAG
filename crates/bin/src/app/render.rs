@@ -120,12 +120,18 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     }
 
     if state.attention_state.is_open {
+        let labels: std::collections::HashMap<u64, String> = state
+            .attention_actions
+            .iter()
+            .map(|(id, a)| (*id, a.label().to_string()))
+            .collect();
         render_attention_overlay(
             frame,
             size,
             &state.attention_queue,
             &state.attention_state,
             &state.theme,
+            &labels,
         );
     }
 
@@ -174,6 +180,22 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     if let Some(ref rename_state) = state.rename_prompt {
         render_rename_modal(frame, size, rename_state, &state.theme);
     }
+    if let Some((pane, ref text)) = state.reply_prompt {
+        let title = state
+            .panes
+            .get(&pane)
+            .map(|p| format!(" Reply to {} ", p.title()))
+            .unwrap_or_else(|| " Reply ".into());
+        tag_ui::render_prompt_modal(
+            frame,
+            size,
+            &title,
+            " Text to send (Enter sends and presses Enter):",
+            text,
+            72,
+            &state.theme,
+        );
+    }
     if let Some(ref goal) = state.goal_prompt {
         tag_ui::render_prompt_modal(
             frame,
@@ -200,5 +222,6 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.vault_state.is_open
         || state.rename_prompt.is_some()
         || state.goal_prompt.is_some()
+        || state.reply_prompt.is_some()
         || state.tab_tray.is_open
 }
