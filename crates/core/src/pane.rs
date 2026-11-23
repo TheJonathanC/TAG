@@ -105,4 +105,12 @@ pub trait Pane: Send + Sync {
     fn applet_name(&self) -> Option<&'static str> {
         None
     }
+    /// The last `lines` lines of output as plain text (control plane `pane.read`).
+    fn read_text(&mut self, _lines: usize) -> Option<String> {
+        None
+    }
+    /// Agent profile name for agent panes.
+    fn agent_profile(&self) -> Option<String> {
+        None
+    }
 }

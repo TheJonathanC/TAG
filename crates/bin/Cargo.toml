@@ -38,6 +38,7 @@ tag-notify = { path = "../notify", version = "0.1.0" }
 tag-usage = { path = "../usage", version = "0.1.0" }
 tag-applets = { path = "../applets", version = "0.1.0" }
 tag-control = { path = "../control", version = "0.1.0" }
+tag-orchestrator = { path = "../orchestrator", version = "0.1.0" }
 tag-projects = { path = "../projects", version = "0.1.0" }
 tokio = { workspace = true }
 ratatui = { workspace = true }

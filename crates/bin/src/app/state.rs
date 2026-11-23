@@ -96,6 +96,8 @@ pub(crate) struct AppState {
     pub(crate) tokens: tag_control::TokenRegistry,
     /// Running control socket server, if enabled.
     pub(crate) control_server: Option<tag_control::ServerHandle>,
+    /// Control-plane metadata per pane (profile, run/task, worktree, visibility).
+    pub(crate) pane_meta: HashMap<PaneId, PaneMeta>,
     /// Registry of known projects (git repo roots), persisted in the state dir.
     pub(crate) projects: tag_projects::ProjectRegistry,
     /// Set when `projects.json` failed to parse; saving is skipped so it is never overwritten.
@@ -187,6 +189,7 @@ impl AppState {
             status_since: HashMap::new(),
             tokens: tag_control::TokenRegistry::default(),
             control_server: None,
+            pane_meta: HashMap::new(),
             projects,
             projects_load_error,
             active_project_name: None,

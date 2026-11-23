@@ -44,11 +44,18 @@ pub fn tag_cmd(home: &Path) -> Command {
 impl Daemon {
     /// Start a daemon with an optional `config.toml` body.
     pub fn start(config: Option<&str>) -> Daemon {
+        Self::start_with(config, |_| {})
+    }
+
+    /// Start a daemon after letting `prepare` populate the state dir (e.g. a session).
+    pub fn start_with(config: Option<&str>, prepare: impl FnOnce(&Path)) -> Daemon {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let socket_dir = dir.path().join("s");
         let state_dir = dir.path().join("st");
         std::fs::create_dir_all(home.join("tmux")).unwrap();
+        std::fs::create_dir_all(&state_dir).unwrap();
+        prepare(&state_dir);
         let config_path = dir.path().join("config.toml");
         std::fs::write(&config_path, config.unwrap_or("")).unwrap();
         let child = tag_cmd(&home)
@@ -131,5 +138,41 @@ impl Drop for Daemon {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+}
+
+/// Write a session into `state_dir` with one shell pane (id 1) running `sh -c <script>`.
+pub fn seed_shell_session(state_dir: &Path, script: &str) {
+    use tag_core::pane::{PaneId, PaneKind, WorkspaceId};
+    use tag_layout::{SavedPane, SavedSession, SavedWorkspace, Workspace};
+    let mut ws = Workspace::new(WorkspaceId(0), "main");
+    ws.add_initial_pane(PaneId(1));
+    let mut s = SavedSession::new(WorkspaceId(0));
+    s.workspaces.push(SavedWorkspace::from(&ws));
+    s.panes.insert(
+        PaneId(1),
+        SavedPane {
+            id: PaneId(1),
+            title: "seed".into(),
+            kind: PaneKind::Shell,
+            cwd: Some(state_dir.to_path_buf()),
+            command: Some("sh".into()),
+            args: vec!["-c".into(), script.into()],
+        },
+    );
+    s.save_to_file(&state_dir.join("session.json")).unwrap();
+}
+
+/// Poll `f` until it returns `Some` or `secs` pass.
+pub fn eventually<T>(secs: u64, mut f: impl FnMut() -> Option<T>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        if let Some(v) = f() {
+            return v;
+        }
+        if Instant::now() > deadline {
+            panic!("condition not met within {secs}s");
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }

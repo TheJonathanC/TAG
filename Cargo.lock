@@ -2442,6 +2442,7 @@ dependencies = [
  "tag-keys",
  "tag-layout",
  "tag-notify",
+ "tag-orchestrator",
  "tag-projects",
  "tag-pty",
  "tag-ui",

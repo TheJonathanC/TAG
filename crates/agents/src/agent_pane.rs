@@ -172,6 +172,14 @@ impl AgentPane {
 }
 
 impl Pane for AgentPane {
+    fn read_text(&mut self, lines: usize) -> Option<String> {
+        self.pty.read_text(lines)
+    }
+
+    fn agent_profile(&self) -> Option<String> {
+        Some(self.profile_name.clone())
+    }
+
     fn id(&self) -> PaneId {
         self.pty.id()
     }
