@@ -10,6 +10,7 @@
 
 pub mod client;
 pub mod discovery;
+pub mod mcp;
 pub mod methods;
 pub mod protocol;
 pub mod server;
