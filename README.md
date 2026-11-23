@@ -589,6 +589,7 @@ MIT OR Apache-2.0
 TAG keeps a Markdown "brain": per-project notes in `<repo>/.tag/brain/` and global ones in `~/.config/tag/brain/`. Documents are `.md` files with YAML frontmatter and `[[wikilinks]]`; a SQLite FTS index in the state dir is rebuilt automatically.
 
 ```bash
+tag brain init [--no-project-toml]                # bootstrap .tag/brain/brief.md (never overwrites; writes brief.generated.md if present) and .tag/project.toml
 tag brain pin src/auth.py src/deps.py --title "JWT middleware" --tags auth,jwt --desc "What it does..."  # add --global for the global brain
 tag brain ls [--kind pattern] [--global] [--all]   # list documents (project + global by default)
 tag brain show pat_jwt-middleware                  # document, links and backlinks
