@@ -461,6 +461,9 @@ any other client name gets `read`. Act and dangerous calls are logged to
 Start an orchestration run in the running TAG (UI or `tag daemon`): a conductor agent plans the goal,
 TAG runs each task in its own worker agent and git worktree, and merges follow the merge policy.
 
+In the UI, `Ctrl+Space A` opens the workers table (open, peek, hide, kill, reply), `Ctrl+Space f` peeks
+a worker in a floating live view, and background workers show as clickable cards above the status bar.
+
 ```bash
 tag orchestrate "Add OAuth login" [--conductor claude] [--workers agy-neon,claude] \
     [--merge ask|auto] [--budget 5] [--yes]   # --yes skips plan approval

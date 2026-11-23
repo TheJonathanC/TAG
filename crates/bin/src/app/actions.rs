@@ -143,6 +143,8 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
             save_session_to_disk(state);
             state.needs_clear = true;
         }
+        Action::ToggleWorkers => action_toggle_workers(state),
+        Action::Peek => action_peek(state),
         Action::Orchestrate => {
             state.goal_prompt = Some(String::new());
         }

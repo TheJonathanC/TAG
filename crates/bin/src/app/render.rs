@@ -3,9 +3,9 @@ use crate::{app::*, cli::*, session_io::*, sockets::*, tmux::*};
 use ratatui::layout::{Constraint, Direction as LayoutDir, Layout};
 use tag_notify::render_attention_overlay;
 use tag_ui::{
-    render_command_palette, render_empty_state, render_help_overlay, render_rename_modal,
-    render_status_bar, render_tab_tray, render_toasts, render_tour, render_which_key,
-    StatusBarProps,
+    render_card_strip, render_command_palette, render_empty_state, render_help_overlay,
+    render_peek_frame, render_rename_modal, render_status_bar, render_tab_tray, render_toasts,
+    render_tour, render_which_key, render_workers_table, StatusBarProps,
 };
 use tag_usage::render_usage_overlay;
 use tag_vault::render_vault_overlay;
@@ -17,16 +17,20 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     }
 
     // Layout: top pane area, bottom status bar (height 1)
+    let cards = build_card_items(state);
+    let strip_h = card_strip_height(state);
     let chunks = Layout::default()
         .direction(LayoutDir::Vertical)
         .constraints([
-            Constraint::Length(size.height.saturating_sub(1)),
+            Constraint::Length(size.height.saturating_sub(1 + strip_h)),
+            Constraint::Length(strip_h),
             Constraint::Length(1),
         ])
         .split(size);
 
     let main_area = chunks[0];
-    let status_area = chunks[1];
+    let strip_area = chunks[1];
+    let status_area = chunks[2];
 
     // Determine tab tray split if open
     let (tray_area, content_area) = if state.tab_tray.is_open {
@@ -74,6 +78,10 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             &mut state.tab_tray,
             &state.theme,
         );
+    }
+
+    if strip_h > 0 {
+        render_card_strip(frame, strip_area, &cards, &state.theme);
     }
 
     // 3. Render Status Bar
@@ -173,6 +181,27 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
         render_vault_overlay(frame, size, &state.vault, &state.vault_state, &state.theme);
     }
 
+    if state.workers.is_open {
+        let rows = build_worker_rows(state, true);
+        render_workers_table(frame, size, &rows, &mut state.workers, &state.theme);
+    }
+
+    if let Some(pk) = state.peek {
+        if state.panes.contains_key(&pk.pane) {
+            let title = state
+                .panes
+                .get(&pk.pane)
+                .map(|p| p.title())
+                .unwrap_or_default();
+            let inner = render_peek_frame(frame, size, &title, pk.input, &state.theme);
+            if let Some(pane) = state.panes.get_mut(&pk.pane) {
+                pane.render(frame, inner, true, &state.theme);
+            }
+        } else {
+            state.peek = None;
+        }
+    }
+
     if state.tour.is_active {
         render_tour(frame, size, &state.tour, &state.theme);
     }
@@ -224,4 +253,6 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.goal_prompt.is_some()
         || state.reply_prompt.is_some()
         || state.tab_tray.is_open
+        || state.workers.is_open
+        || state.peek.is_some()
 }

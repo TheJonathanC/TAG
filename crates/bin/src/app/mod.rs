@@ -17,6 +17,7 @@ pub(crate) mod render;
 pub(crate) mod sessions;
 pub(crate) mod state;
 pub(crate) mod tray;
+pub(crate) mod workers;
 
 pub(crate) use actions::*;
 pub(crate) use control::*;
@@ -35,3 +36,4 @@ pub(crate) use render::*;
 pub(crate) use sessions::*;
 pub(crate) use state::*;
 pub(crate) use tray::*;
+pub(crate) use workers::*;

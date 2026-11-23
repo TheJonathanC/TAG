@@ -54,7 +54,9 @@ pub(crate) fn initial_pane_size(state: &AppState) -> (u16, u16) {
 
 /// Screen area used by panes (excludes the status bar and an open tab tray).
 pub(crate) fn content_area(state: &AppState) -> Rect {
-    let height = state.term_height.saturating_sub(1);
+    let height = state
+        .term_height
+        .saturating_sub(1 + card_strip_height(state));
     let tray_w = tray_width(state);
     Rect {
         x: tray_w,

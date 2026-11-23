@@ -207,6 +207,13 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                 }
                 return false;
             }
+            if handle_peek_key(state, &key) {
+                return false;
+            }
+            if state.workers.is_open {
+                handle_workers_key(state, &key);
+                return false;
+            }
             // Check rename modal prompt first
             if let Some(ref mut rename) = state.rename_prompt {
                 match key.code {
@@ -957,6 +964,10 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
         }
         AppEvent::TerminalInput(CrossEvent::Mouse(mouse)) => {
             state.is_dirty = true;
+            if state.peek.is_some() || state.workers.is_open {
+                handle_overlay_mouse(state, &mouse);
+                return false;
+            }
             if state.palette.is_open {
                 let matched_count =
                     get_matched_commands(&state.command_registry, &state.palette.query).len();
@@ -1134,6 +1145,17 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                             }
                         }
                         return false;
+                    }
+
+                    // 1b. Card strip
+                    if let Some(strip) = card_strip_area(state) {
+                        if row == strip.y {
+                            let cards = build_card_items(state);
+                            if let Some(pid) = tag_ui::card_at(strip, &cards, col, row) {
+                                promote_pane(state, pid);
+                            }
+                            return false;
+                        }
                     }
 
                     // 2. Check if clicked in Tab Tray

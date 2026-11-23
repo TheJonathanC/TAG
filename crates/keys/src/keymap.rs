@@ -113,6 +113,8 @@ impl Keymap {
         leader_bindings.insert('z', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert('m', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert('o', (Action::Orchestrate, "Orchestrate (start a run)"));
+        leader_bindings.insert('A', (Action::ToggleWorkers, "Workers table"));
+        leader_bindings.insert('f', (Action::Peek, "Peek worker"));
         leader_bindings.insert(',', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('R', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('Z', (Action::UndoLayout, "Undo layout"));

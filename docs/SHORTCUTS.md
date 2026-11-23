@@ -63,3 +63,6 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | Shortcut | Action | Description |
 | --- | --- | --- |
 | `Leader+o` | Orchestrate | Prompt for a goal and start a run: a conductor agent plans it and TAG runs the worker agents (approve the plan from the attention queue, `Leader+a`) |
+| `Leader+A` | Workers table | k9s-style overlay of every agent worker (needs-input first). `↑/↓`/`j` move, `Enter` open as pane, `e` peek, `h` hide, `k` kill (`y` confirms), `r` reply, `/` filter text, `f` cycle filter (all / needs me / running / done), `Esc` close. Click selects, double-click opens |
+| `Leader+f` | Peek | Floating live view (~80% of the screen) of the first card, else the first agent needing input, else the first hidden worker. `i` turns input forwarding on (then `Alt+i` turns it off), `Enter` opens it as a pane, `Esc` closes |
+| Card strip | Cards | Minimized/background workers show in a one-row strip above the status bar (`[● t1 agy 4m] [? t2 needs input] [✓ t3]`); click a card to promote it to a pane |

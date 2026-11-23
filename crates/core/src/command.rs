@@ -131,6 +131,23 @@ impl CommandRegistry {
                 action: Action::Orchestrate,
             },
             Command {
+                id: "workers.table".into(),
+                name: "Workers Table".into(),
+                category: CommandCategory::Layout,
+                description: "k9s-style table of all agent workers: open, peek, hide, kill, reply"
+                    .into(),
+                default_shortcut: Some("^Space+A".into()),
+                action: Action::ToggleWorkers,
+            },
+            Command {
+                id: "workers.peek".into(),
+                name: "Peek Worker".into(),
+                category: CommandCategory::Layout,
+                description: "Floating live view of a card, or the next agent needing input".into(),
+                default_shortcut: Some("^Space+f".into()),
+                action: Action::Peek,
+            },
+            Command {
                 id: "pane.rename".into(),
                 name: "Rename Pane".into(),
                 category: CommandCategory::Layout,
