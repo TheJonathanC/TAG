@@ -1240,6 +1240,7 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
         }
         AppEvent::Tick => {
             deliver_pending_prompts(state);
+            orchestrate_tick(state);
             let now = chrono::Utc::now();
             let before = state.toasts.len();
             state.toasts.retain(|t| {

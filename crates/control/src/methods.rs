@@ -510,8 +510,13 @@ pub struct WorktreeCreateResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TestsRunParams {
-    /// Worktree name or path.
-    pub worktree: String,
+    /// Worktree name or path. Alternatively give `run` + `task`.
+    #[serde(default)]
+    pub worktree: Option<String>,
+    #[serde(default)]
+    pub run: Option<String>,
+    #[serde(default)]
+    pub task: Option<String>,
     /// Command to run. Defaults to `test_command` from `.tag/project.toml`.
     #[serde(default)]
     pub command: Option<String>,

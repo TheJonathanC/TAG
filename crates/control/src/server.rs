@@ -89,6 +89,13 @@ impl TokenRegistry {
         }
     }
 
+    /// Revoke the worker tokens bound to `run` (the conductor keeps its token).
+    pub fn revoke_run_workers(&self, run: &str) {
+        if let Ok(mut m) = self.0.write() {
+            m.retain(|_, g| !(g.role == Role::Worker && g.run.as_deref() == Some(run)));
+        }
+    }
+
     /// Revoke every token bound to `run`.
     pub fn revoke_run(&self, run: &str) {
         if let Ok(mut m) = self.0.write() {

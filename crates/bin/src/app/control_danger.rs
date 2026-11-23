@@ -168,6 +168,8 @@ fn worktree_merge(
     }
     let into = p.into.clone();
     let require_tests = p.require_tests;
+    let tx = state.event_tx.clone();
+    let wt_path = wt.path.clone();
     reply_in_background(reply, move || {
         let branch = wt
             .branch
@@ -177,11 +179,18 @@ fn worktree_merge(
         if require_tests {
             check_tests_passed(record.as_ref(), &head)?;
         }
-        merge_branch(&repo, &branch, into.as_deref()).and_then(|c| {
-            respond(MergeResult {
-                merged_commit: c,
-                queued: false,
-            })
+        let commit = merge_branch(&repo, &branch, into.as_deref())?;
+        let (r, _rx) = ReplyHandle::new();
+        continue_in_loop(
+            &tx,
+            crate::app::internal_ctx(),
+            "_internal.merged",
+            json!({ "worktree": wt_path, "commit": commit }),
+            r,
+        );
+        respond(MergeResult {
+            merged_commit: commit,
+            queued: false,
         })
     });
 }

@@ -116,6 +116,7 @@ pub(crate) fn handle_act(
                 params["worktree"].as_str(),
                 serde_json::from_value::<TestRecord>(params["record"].clone()),
             ) {
+                record_task_test(state, Path::new(path), &rec);
                 state.test_results.insert(canonical(Path::new(path)), rec);
             }
             Ok(Value::Null)
@@ -629,12 +630,24 @@ fn tests_run(state: &mut AppState, client: &ClientCtx, p: TestsRunParams, reply:
             return;
         }
     };
+    let target = match resolve_task_worktree(
+        state,
+        p.worktree.as_deref(),
+        p.run.as_deref(),
+        p.task.as_deref(),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            reply.send(Err(e));
+            return;
+        }
+    };
     let own = own_worktree(state, client);
     let tx = state.event_tx.clone();
     let client = client.clone();
     std::thread::spawn(move || {
         let res = (|| {
-            let wt = find_worktree(&repo, &p.worktree)?;
+            let wt = find_worktree(&repo, &target)?;
             check_worktree_scope(&own, &wt.path)?;
             let command = match p.command.clone() {
                 Some(c) => c,

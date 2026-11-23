@@ -104,6 +104,8 @@ pub(crate) struct AppState {
     pub(crate) last_output: HashMap<PaneId, std::time::Instant>,
     /// Last `tests.run` result per (canonical) worktree path.
     pub(crate) test_results: HashMap<std::path::PathBuf, TestRecord>,
+    /// Orchestration runs managed by this instance, by run id.
+    pub(crate) runs: HashMap<String, ActiveRun>,
     /// Registry of known projects (git repo roots), persisted in the state dir.
     pub(crate) projects: tag_projects::ProjectRegistry,
     /// Set when `projects.json` failed to parse; saving is skipped so it is never overwritten.
@@ -199,6 +201,7 @@ impl AppState {
             pending_prompts: HashMap::new(),
             last_output: HashMap::new(),
             test_results: HashMap::new(),
+            runs: HashMap::new(),
             projects,
             projects_load_error,
             active_project_name: None,

@@ -76,6 +76,11 @@ impl AttentionQueue {
         self.items.retain(|i| i.pane_id != Some(pane_id));
     }
 
+    /// Remove every item for which `f` returns true.
+    pub fn clear_matching(&mut self, f: impl Fn(&AttentionItem) -> bool) {
+        self.items.retain(|i| !f(i));
+    }
+
     pub fn clear_all(&mut self) {
         self.items.clear();
     }

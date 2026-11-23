@@ -91,6 +91,8 @@ pub(crate) async fn run_app(
             10,
         );
     }
+    install_templates(&state.paths.config_dir);
+    load_active_runs(&mut state);
     if let Some(e) = state.start_control_server().await {
         push_toast(
             &mut state,
@@ -403,6 +405,8 @@ pub(crate) async fn run_daemon(paths: AppPaths) -> Result<(), anyhow::Error> {
     }
     let usage_rx = spawn_usage_scanner(dirs_or_home());
     let mut state = AppState::new(config, config_error, paths, event_tx.clone(), usage_rx)?;
+    install_templates(&state.paths.config_dir);
+    load_active_runs(&mut state);
     if let Some(err) = state.start_control_server().await {
         let _ = std::fs::remove_file(&hook_path);
         anyhow::bail!(err);

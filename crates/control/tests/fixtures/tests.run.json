@@ -2,6 +2,8 @@
   "method": "tests.run",
   "params": {
     "command": null,
+    "run": null,
+    "task": null,
     "timeout_s": 1800,
     "worktree": "feature-x"
   },
