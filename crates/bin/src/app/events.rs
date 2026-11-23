@@ -4,7 +4,7 @@ use crossterm::event::{Event as CrossEvent, KeyCode, KeyModifiers, MouseEventKin
 use ratatui::layout::Rect;
 use tag_clipboard::{copy_to_clipboard, set_internal_clipboard, wrap_bracketed_paste};
 use tag_core::action::{Action, SplitDirection};
-use tag_core::event::{AppEvent, HookEvent};
+use tag_core::event::{AppEvent, HookEvent, StateEvent};
 use tag_notify::{Notifier, SystemNotifier};
 use tag_ui::{
     filter_tray_items, get_matched_commands, get_selected_command, hit_test_palette,
@@ -16,6 +16,7 @@ use tracing::info;
 pub(crate) fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
     let was_overlay_open = is_any_overlay_open(state);
     let should_quit = handle_app_event_inner(state, event);
+    state.publish_status_changes();
     let is_overlay_open = is_any_overlay_open(state);
     if was_overlay_open != is_overlay_open {
         state.needs_clear = true;
@@ -42,10 +43,18 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             if let Some(pane) = state.panes.get_mut(&pane_id) {
                 let _ = pane.handle_event(&AppEvent::PtyExited { pane_id, exit_code });
             }
+            // Flush any final status change before the pane disappears
+            state.publish_status_changes();
             for ws in state.layout_mgr.workspaces_mut() {
                 ws.remove_pane(pane_id);
             }
             state.panes.remove(&pane_id);
+            state.last_status.remove(&pane_id);
+            state.publish(StateEvent::PaneExited {
+                pane: pane_id,
+                exit_code,
+                at: chrono::Utc::now(),
+            });
             state.attention_queue.clear_by_pane(pane_id);
             state.needs_clear = true;
             save_session_to_disk(state);
@@ -82,13 +91,21 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             }
 
             info!("Agent hook event received: {:?}", payload.event);
-            let _item_id = state.attention_queue.push(
+            let item_id = state.attention_queue.push(
                 payload.pane_id,
                 payload.agent.clone(),
                 payload.event.clone(),
                 payload.message.clone(),
                 payload.worktree.clone(),
             );
+            state.publish(StateEvent::AttentionAdded {
+                item: item_id,
+                pane: payload.pane_id,
+                agent: payload.agent.clone(),
+                event: payload.event.clone(),
+                message: payload.message.clone(),
+                at: chrono::Utc::now(),
+            });
 
             // Toast notification (when notifications enabled)
             if state.config.notifications.enabled {

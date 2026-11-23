@@ -1,6 +1,6 @@
 #[allow(unused_imports)]
 use crate::{app::*, cli::*, sockets::*, tmux::*};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tag_core::config::Config;
 use tag_core::pane::PaneKind;
 use tag_layout::{SavedPane, SavedSession, SavedWorkspace};
@@ -14,9 +14,8 @@ pub(crate) fn config_path() -> PathBuf {
 
 /// Load the config file. On a parse error the defaults are used and the error is
 /// returned alongside so it can be shown (and the broken file is never overwritten).
-pub(crate) fn load_app_config() -> (Config, Option<String>) {
-    let path = config_path();
-    match std::fs::read_to_string(&path) {
+pub(crate) fn load_app_config(path: &Path) -> (Config, Option<String>) {
+    match std::fs::read_to_string(path) {
         Ok(content) => match Config::load_from_str(&content) {
             Ok(cfg) => (cfg, None),
             Err(e) => (
@@ -28,12 +27,11 @@ pub(crate) fn load_app_config() -> (Config, Option<String>) {
     }
 }
 
-pub(crate) fn save_app_config(config: &Config) -> Result<(), anyhow::Error> {
-    let path = config_path();
+pub(crate) fn save_app_config(path: &Path, config: &Config) -> Result<(), anyhow::Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, config.to_toml_string()?)?;
+    std::fs::write(path, config.to_toml_string()?)?;
     Ok(())
 }
 
@@ -44,10 +42,7 @@ pub(crate) fn dirs_or_home() -> PathBuf {
 }
 
 pub(crate) fn save_session_to_disk(state: &AppState) {
-    let session_path = dirs_or_home()
-        .join(".config")
-        .join("tag")
-        .join("session.json");
+    let session_path = &state.paths.session_path;
     let mut saved = SavedSession::new(state.layout_mgr.active_workspace_id());
     for ws in state.layout_mgr.workspaces() {
         let mut clean_ws = ws.clone();
@@ -113,5 +108,5 @@ pub(crate) fn save_session_to_disk(state: &AppState) {
             },
         );
     }
-    let _ = saved.save_to_file(&session_path);
+    let _ = saved.save_to_file(session_path);
 }

@@ -8,21 +8,13 @@ use std::io::{self};
 use std::path::PathBuf;
 use std::time::Duration;
 use tag_agents::HookServer;
-use tag_clipboard::{SnippetBank, SnippetOverlayState};
 use tag_core::action::Action;
-use tag_core::command::CommandRegistry;
 use tag_core::event::AppEvent;
 use tag_core::pane::{PaneId, PaneKind};
-use tag_core::theme::Theme;
-use tag_git::{GitOverlayState, StandardGitBackend};
-use tag_keys::KeyStateMachine;
 use tag_layout::{LayoutManager, SavedSession, Workspace};
-use tag_notify::{AttentionOverlayState, AttentionQueue};
 use tag_pty::PtyPane;
-use tag_ui::{PaletteState, TabTrayState, ToastLevel, TourState};
-use tag_usage::{UsageOverlayState, UsageStore};
-use tag_vault::{VaultOverlayState, VaultStore};
-use tokio::sync::mpsc::unbounded_channel;
+use tag_ui::ToastLevel;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 pub(crate) async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -70,47 +62,8 @@ pub(crate) async fn run_app(
             }
         })?;
 
-    // Spawn tick interval (100ms for animations and toast expiry)
-    let tick_tx = event_tx.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
-        loop {
-            interval.tick().await;
-            if tick_tx.send(AppEvent::Tick).is_err() {
-                break;
-            }
-        }
-    });
-
-    // Spawn OS signal listener for graceful shutdown & session save on SIGHUP, SIGTERM, SIGINT
-    let sig_tx = event_tx.clone();
-    tokio::spawn(async move {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{signal, SignalKind};
-            let mut sigterm = signal(SignalKind::terminate()).ok();
-            let mut sighup = signal(SignalKind::hangup()).ok();
-            let mut sigint = signal(SignalKind::interrupt()).ok();
-
-            tokio::select! {
-                _ = async {
-                    if let Some(ref mut s) = sigterm { s.recv().await } else { std::future::pending().await }
-                } => {},
-                _ = async {
-                    if let Some(ref mut s) = sighup { s.recv().await } else { std::future::pending().await }
-                } => {},
-                _ = async {
-                    if let Some(ref mut s) = sigint { s.recv().await } else { std::future::pending().await }
-                } => {},
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = tokio::signal::ctrl_c().await;
-        }
-
-        let _ = sig_tx.send(AppEvent::Action(Action::Quit));
-    });
+    spawn_tick(event_tx.clone());
+    spawn_signal_listener(event_tx.clone());
 
     // Ensure tmux has mouse mode and responsive window sizing globally enabled if a tmux server is running (asynchronously)
     tokio::task::spawn_blocking(|| {
@@ -124,83 +77,10 @@ pub(crate) async fn run_app(
     });
 
     // Initialize state
-    let (config, _) = load_app_config();
-    let theme = Theme::from_config(config.theme.clone());
-    let command_registry = CommandRegistry::new();
-    let key_state_machine = KeyStateMachine::from_config(&config, &command_registry);
-    let layout_mgr = LayoutManager::new();
-    let usage_store = UsageStore::open_in_memory()?;
-    let snippets_path = dirs_or_home()
-        .join(".config")
-        .join("tag")
-        .join("snippets.toml");
-    let snippets = SnippetBank::load_from_file_or_default(&snippets_path);
-    let vault_path = dirs_or_home().join(".config").join("tag").join("vault.enc");
-    let vault = VaultStore::new(vault_path, config.vault_idle_timeout_mins);
-
-    // Background transcript scanner: re-parses only changed files and streams new events
-    let (usage_tx, usage_rx) = std::sync::mpsc::channel();
-    let scan_home = dirs_or_home();
-    let _ = std::thread::Builder::new()
-        .name("usage-scanner".into())
-        .spawn(move || {
-            let mut scanner = tag_usage::UsageScanner::new(scan_home);
-            loop {
-                let events = scanner.scan_changed();
-                if !events.is_empty() && usage_tx.send(events).is_err() {
-                    break;
-                }
-                std::thread::sleep(USAGE_SCAN_INTERVAL);
-            }
-        });
-    let (git_tx, git_rx) = std::sync::mpsc::channel();
-
-    let mut state = AppState {
-        panes: HashMap::new(),
-        next_pane_id: 1,
-        layout_mgr,
-        key_state_machine,
-        command_registry,
-        theme,
-        config,
-        attention_queue: AttentionQueue::new(),
-        toasts: Vec::new(),
-        dnd_active: false,
-        tab_tray: TabTrayState::default(),
-        palette: PaletteState::default(),
-        help_open: false,
-        help_scroll: 0,
-        tour: TourState::default(),
-        attention_state: AttentionOverlayState::default(),
-        usage_state: UsageOverlayState::default(),
-        git_state: GitOverlayState::default(),
-        snippet_state: SnippetOverlayState::default(),
-        vault_state: VaultOverlayState::default(),
-        rename_prompt: None,
-        usage_store,
-        snippets,
-        vault,
-        git_backend: StandardGitBackend,
-        event_tx: event_tx.clone(),
-        is_dirty: true,
-        needs_clear: false,
-        term_width: 80,
-        term_height: 24,
-        cached_usage_summary: None,
-        last_usage_query: std::time::Instant::now(),
-        git_cache: None,
-        terminal_focused: true,
-        last_notification_time: None,
-        selecting_pane: None,
-        available_update: None,
-        config_error,
-        quit_confirm_at: None,
-        usage_rx,
-        git_tx,
-        git_rx,
-        git_generation: 0,
-        git_loading: false,
-    };
+    let paths = AppPaths::user_default();
+    let (config, _) = load_app_config(&paths.config_path);
+    let usage_rx = spawn_usage_scanner(dirs_or_home());
+    let mut state = AppState::new(config, config_error, paths, event_tx.clone(), usage_rx)?;
     state.update_usage_summary();
     if let Some(err) = state.config_error.clone() {
         push_toast(
@@ -225,11 +105,86 @@ pub(crate) async fn run_app(
     state.term_width = term_size.width;
     state.term_height = term_size.height;
 
+    restore_session(&mut state, term_size.width, term_size.height);
+
+    // Ensure clean screen and draw initial frame immediately before scanning historical logs
+    let _ = terminal.clear();
+    terminal.draw(|f| {
+        render_frame(f, &mut state);
+    })?;
+    state.is_dirty = false;
+
+    state.is_dirty = true;
+
+    // Background update check after app startup
+    let update_tx = event_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::task::spawn_blocking(move || {
+            if let Some(newer) = crate::update::check_for_github_update(TAG_VERSION) {
+                let _ = update_tx.send(AppEvent::UpdateAvailable(newer));
+            }
+        });
+    });
+
+    // Main event loop
+    loop {
+        if state.needs_clear {
+            let _ = terminal.clear();
+            state.needs_clear = false;
+        }
+
+        // Render if state is dirty
+        if state.is_dirty {
+            terminal.draw(|f| {
+                render_frame(f, &mut state);
+            })?;
+            state.is_dirty = false;
+        }
+
+        // Wait for next event
+        let event = match event_rx.recv().await {
+            Some(ev) => ev,
+            None => break,
+        };
+
+        let mut should_quit = handle_app_event(&mut state, event);
+
+        // Batch-drain all pending events in queue before redrawing
+        while !should_quit {
+            match event_rx.try_recv() {
+                Ok(next_ev) => should_quit = handle_app_event(&mut state, next_ev),
+                Err(_) => break,
+            }
+        }
+        if should_quit {
+            break;
+        }
+    }
+
+    // Persist the session exactly once on the way out
+    save_session_to_disk(&state);
+
+    // Cleanly kill child processes in all panes
+    for pane in state.panes.values_mut() {
+        pane.kill();
+    }
+
+    // Stop input poller and wait for it to cleanly finish
+    is_running.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = input_thread.join();
+
+    // Clean up socket file
+    let _ = std::fs::remove_file(socket_path);
+
+    Ok(())
+}
+
+/// Restore the saved session (panes and workspaces) from `state.paths.session_path`.
+/// `width`/`height` are the terminal size used to size respawned PTYs.
+pub(crate) fn restore_session(state: &mut AppState, width: u16, height: u16) {
     // Restore saved session if present, otherwise start with empty workspace showing ASCII art
-    let session_path = dirs_or_home()
-        .join(".config")
-        .join("tag")
-        .join("session.json");
+    let session_path = state.paths.session_path.clone();
     if session_path.exists() {
         if let Ok(saved) = SavedSession::load_from_file(&session_path) {
             if !saved.panes.is_empty() {
@@ -314,10 +269,10 @@ pub(crate) async fn run_app(
                         &args,
                         &env,
                         sp.cwd.or_else(|| std::env::current_dir().ok()),
-                        term_size.width.saturating_sub(2),
-                        term_size.height.saturating_sub(4),
+                        width.saturating_sub(2),
+                        height.saturating_sub(4),
                         state.config.scrollback_lines,
-                        event_tx.clone(),
+                        state.event_tx.clone(),
                     ) {
                         state.panes.insert(pid, Box::new(pane));
                     }
@@ -352,76 +307,70 @@ pub(crate) async fn run_app(
             }
         }
     }
+}
 
-    // Ensure clean screen and draw initial frame immediately before scanning historical logs
-    let _ = terminal.clear();
-    terminal.draw(|f| {
-        render_frame(f, &mut state);
-    })?;
-    state.is_dirty = false;
-
-    state.is_dirty = true;
-
-    // Background update check after app startup
-    let update_tx = event_tx.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        tokio::task::spawn_blocking(move || {
-            if let Some(newer) = crate::update::check_for_github_update(TAG_VERSION) {
-                let _ = update_tx.send(AppEvent::UpdateAvailable(newer));
+/// Start the background transcript scanner: re-parses only changed files and streams new events.
+pub(crate) fn spawn_usage_scanner(
+    home: PathBuf,
+) -> std::sync::mpsc::Receiver<Vec<tag_usage::UsageEvent>> {
+    let (usage_tx, usage_rx) = std::sync::mpsc::channel();
+    let _ = std::thread::Builder::new()
+        .name("usage-scanner".into())
+        .spawn(move || {
+            let mut scanner = tag_usage::UsageScanner::new(home);
+            loop {
+                let events = scanner.scan_changed();
+                if !events.is_empty() && usage_tx.send(events).is_err() {
+                    break;
+                }
+                std::thread::sleep(USAGE_SCAN_INTERVAL);
             }
         });
-    });
+    usage_rx
+}
 
-    // Main event loop
-    loop {
-        if state.needs_clear {
-            let _ = terminal.clear();
-            state.needs_clear = false;
-        }
-
-        // Render if state is dirty
-        if state.is_dirty {
-            terminal.draw(|f| {
-                render_frame(f, &mut state);
-            })?;
-            state.is_dirty = false;
-        }
-
-        // Wait for next event
-        let event = match event_rx.recv().await {
-            Some(ev) => ev,
-            None => break,
-        };
-
-        let mut should_quit = handle_app_event(&mut state, event);
-
-        // Batch-drain all pending events in queue before redrawing
-        while !should_quit {
-            match event_rx.try_recv() {
-                Ok(next_ev) => should_quit = handle_app_event(&mut state, next_ev),
-                Err(_) => break,
+/// Spawn the 100ms tick used for animations, toast expiry and background result draining.
+pub(crate) fn spawn_tick(event_tx: UnboundedSender<AppEvent>) {
+    let tick_tx = event_tx;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            if tick_tx.send(AppEvent::Tick).is_err() {
+                break;
             }
         }
-        if should_quit {
-            break;
+    });
+}
+
+/// Quit gracefully (saving the session) on SIGHUP, SIGTERM or SIGINT.
+pub(crate) fn spawn_signal_listener(event_tx: UnboundedSender<AppEvent>) {
+    let sig_tx = event_tx;
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate()).ok();
+            let mut sighup = signal(SignalKind::hangup()).ok();
+            let mut sigint = signal(SignalKind::interrupt()).ok();
+
+            tokio::select! {
+                _ = async {
+                    if let Some(ref mut s) = sigterm { s.recv().await } else { std::future::pending().await }
+                } => {},
+                _ = async {
+                    if let Some(ref mut s) = sighup { s.recv().await } else { std::future::pending().await }
+                } => {},
+                _ = async {
+                    if let Some(ref mut s) = sigint { s.recv().await } else { std::future::pending().await }
+                } => {},
+            }
         }
-    }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
 
-    // Persist the session exactly once on the way out
-    save_session_to_disk(&state);
-
-    // Cleanly kill child processes in all panes
-    for pane in state.panes.values_mut() {
-        pane.kill();
-    }
-
-    // Stop input poller and wait for it to cleanly finish
-    is_running.store(false, std::sync::atomic::Ordering::Relaxed);
-    let _ = input_thread.join();
-
-    // Clean up socket file
-    let _ = std::fs::remove_file(socket_path);
-
-    Ok(())
+        let _ = sig_tx.send(AppEvent::Action(Action::Quit));
+    });
 }

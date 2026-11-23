@@ -6,7 +6,7 @@ use std::time::Duration;
 use tag_clipboard::{SnippetBank, SnippetOverlayState};
 use tag_core::command::CommandRegistry;
 use tag_core::config::Config;
-use tag_core::event::AppEvent;
+use tag_core::event::{normalize_status, AppEvent, StateEvent};
 use tag_core::pane::{Pane, PaneId};
 use tag_core::theme::Theme;
 use tag_git::{GitOverlayState, StandardGitBackend};
@@ -16,6 +16,7 @@ use tag_notify::{AttentionOverlayState, AttentionQueue};
 use tag_ui::{PaletteState, RenameModalState, TabTrayState, Toast, TourState};
 use tag_usage::{UsageOverlayState, UsageStore};
 use tag_vault::{VaultOverlayState, VaultStore};
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub(crate) struct CachedGitData {
@@ -83,6 +84,116 @@ pub(crate) struct AppState {
     pub(crate) git_rx: std::sync::mpsc::Receiver<(u64, CachedGitData)>,
     pub(crate) git_generation: u64,
     pub(crate) git_loading: bool,
+    /// Filesystem locations for this instance.
+    pub(crate) paths: AppPaths,
+    /// Publishes [`StateEvent`]s to control-plane subscribers.
+    pub(crate) state_tx: broadcast::Sender<StateEvent>,
+    /// Last published agent status per pane, used to detect transitions.
+    pub(crate) last_status: HashMap<PaneId, String>,
+}
+
+/// Capacity of the [`StateEvent`] broadcast channel.
+pub(crate) const STATE_EVENT_CAPACITY: usize = 1024;
+
+impl AppState {
+    /// Build a fresh state with no panes.
+    pub(crate) fn new(
+        config: Config,
+        config_error: Option<String>,
+        paths: AppPaths,
+        event_tx: UnboundedSender<AppEvent>,
+        usage_rx: std::sync::mpsc::Receiver<Vec<tag_usage::UsageEvent>>,
+    ) -> Result<Self, anyhow::Error> {
+        let theme = Theme::from_config(config.theme.clone());
+        let command_registry = CommandRegistry::new();
+        let key_state_machine = KeyStateMachine::from_config(&config, &command_registry);
+        let usage_store = UsageStore::open_in_memory()?;
+        let snippets = SnippetBank::load_from_file_or_default(&paths.snippets_path);
+        let vault = VaultStore::new(paths.vault_path.clone(), config.vault_idle_timeout_mins);
+        let (git_tx, git_rx) = std::sync::mpsc::channel();
+        let (state_tx, _) = broadcast::channel(STATE_EVENT_CAPACITY);
+        Ok(AppState {
+            panes: HashMap::new(),
+            next_pane_id: 1,
+            layout_mgr: LayoutManager::new(),
+            key_state_machine,
+            command_registry,
+            theme,
+            config,
+            attention_queue: AttentionQueue::new(),
+            toasts: Vec::new(),
+            dnd_active: false,
+            tab_tray: TabTrayState::default(),
+            palette: PaletteState::default(),
+            help_open: false,
+            help_scroll: 0,
+            tour: TourState::default(),
+            attention_state: AttentionOverlayState::default(),
+            usage_state: UsageOverlayState::default(),
+            git_state: GitOverlayState::default(),
+            snippet_state: SnippetOverlayState::default(),
+            vault_state: VaultOverlayState::default(),
+            rename_prompt: None,
+            usage_store,
+            snippets,
+            vault,
+            git_backend: StandardGitBackend,
+            event_tx,
+            is_dirty: true,
+            needs_clear: false,
+            term_width: 80,
+            term_height: 24,
+            cached_usage_summary: None,
+            last_usage_query: std::time::Instant::now(),
+            git_cache: None,
+            terminal_focused: true,
+            last_notification_time: None,
+            selecting_pane: None,
+            available_update: None,
+            config_error,
+            quit_confirm_at: None,
+            usage_rx,
+            git_tx,
+            git_rx,
+            git_generation: 0,
+            git_loading: false,
+            paths,
+            state_tx,
+            last_status: HashMap::new(),
+        })
+    }
+
+    /// Publish a state event. Having no subscribers is not an error.
+    pub(crate) fn publish(&self, event: StateEvent) {
+        let _ = self.state_tx.send(event);
+    }
+
+    /// Compare every pane's current agent status with the last published one and emit
+    /// [`StateEvent::PaneStatusChanged`] for each transition.
+    pub(crate) fn publish_status_changes(&mut self) {
+        let mut changes = Vec::new();
+        for (&pid, pane) in &self.panes {
+            if let Some(status) = pane.agent_status() {
+                let status = normalize_status(status);
+                let prev = self.last_status.get(&pid);
+                if prev != Some(&status) {
+                    changes.push((pid, prev.cloned(), status));
+                }
+            }
+        }
+        self.last_status
+            .retain(|pid, _| self.panes.contains_key(pid));
+        let now = chrono::Utc::now();
+        for (pid, from, to) in changes {
+            self.last_status.insert(pid, to.clone());
+            self.publish(StateEvent::PaneStatusChanged {
+                pane: pid,
+                from,
+                to,
+                at: now,
+            });
+        }
+    }
 }
 
 impl AppState {
@@ -118,5 +229,130 @@ impl AppState {
         let id = PaneId(self.next_pane_id);
         self.next_pane_id += 1;
         id
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use ratatui::Frame;
+    use tag_core::event::{EventResult, HookEvent, HookPayload};
+    use tag_core::pane::PaneKind;
+
+    /// A fake agent pane whose status is driven by hook payloads.
+    pub(crate) struct MockAgentPane {
+        pub(crate) id: PaneId,
+        pub(crate) status: &'static str,
+    }
+
+    impl Pane for MockAgentPane {
+        fn id(&self) -> PaneId {
+            self.id
+        }
+        fn title(&self) -> String {
+            "mock".into()
+        }
+        fn kind(&self) -> PaneKind {
+            PaneKind::Agent
+        }
+        fn render(&mut self, _: &mut Frame, _: Rect, _: bool, _: &Theme) {}
+        fn handle_event(&mut self, event: &AppEvent) -> EventResult {
+            if let AppEvent::AgentHook(p) = event {
+                self.status = match p.event {
+                    HookEvent::NeedsInput | HookEvent::NeedsPermission => "awaiting-input",
+                    HookEvent::TaskDone => "done",
+                    _ => self.status,
+                };
+            }
+            EventResult::Consumed
+        }
+        fn on_resize(&mut self, _: u16, _: u16) {}
+        fn is_active(&self) -> bool {
+            true
+        }
+        fn agent_status(&self) -> Option<&'static str> {
+            Some(self.status)
+        }
+    }
+
+    /// An `AppState` rooted in a unique temp dir, with notifications disabled.
+    pub(crate) fn test_state() -> (AppState, tokio::sync::mpsc::UnboundedReceiver<AppEvent>) {
+        let dir =
+            std::env::temp_dir().join(format!("tag-test-{}-{}", std::process::id(), rand_suffix()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = AppPaths::isolated(
+            Some(dir.join("config.toml")),
+            dir.join("state"),
+            dir.join("sock"),
+        );
+        let mut config = Config::default();
+        config.notifications.enabled = false;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_usage_tx, usage_rx) = std::sync::mpsc::channel();
+        let state = AppState::new(config, None, paths, tx, usage_rx).unwrap();
+        (state, rx)
+    }
+
+    fn rand_suffix() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        N.fetch_add(1, Ordering::Relaxed)
+    }
+
+    #[test]
+    fn status_change_from_hook_is_broadcast() {
+        let (mut state, _rx) = test_state();
+        let pid = PaneId(7);
+        state.panes.insert(
+            pid,
+            Box::new(MockAgentPane {
+                id: pid,
+                status: "running",
+            }),
+        );
+        let mut sub = state.state_tx.subscribe();
+
+        // First observation publishes the initial status.
+        state.publish_status_changes();
+        match sub.try_recv().unwrap() {
+            StateEvent::PaneStatusChanged { pane, from, to, .. } => {
+                assert_eq!(pane, pid);
+                assert_eq!(from, None);
+                assert_eq!(to, "running");
+            }
+            other => panic!("unexpected {:?}", other),
+        }
+
+        let payload = HookPayload {
+            event: HookEvent::NeedsInput,
+            pane_id: Some(pid),
+            agent: "fake".into(),
+            worktree: None,
+            message: "needs input".into(),
+            timestamp: chrono::Utc::now(),
+        };
+        handle_app_event(&mut state, AppEvent::AgentHook(payload));
+
+        let mut saw_attention = false;
+        let mut saw_status = false;
+        while let Ok(ev) = sub.try_recv() {
+            match ev {
+                StateEvent::AttentionAdded { pane, .. } => {
+                    assert_eq!(pane, Some(pid));
+                    saw_attention = true;
+                }
+                StateEvent::PaneStatusChanged { from, to, .. } => {
+                    assert_eq!(from.as_deref(), Some("running"));
+                    assert_eq!(to, "awaiting_input");
+                    saw_status = true;
+                }
+                other => panic!("unexpected {:?}", other),
+            }
+        }
+        assert!(saw_attention && saw_status);
+
+        // No change → no event.
+        state.publish_status_changes();
+        assert!(sub.try_recv().is_err());
     }
 }

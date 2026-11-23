@@ -89,7 +89,7 @@ fn main() -> Result<(), anyhow::Error> {
         std::process::exit(1);
     }
 
-    let (config, config_error) = load_app_config();
+    let (config, config_error) = load_app_config(&config_path());
     if let Some(ref err) = config_error {
         eprintln!(
             "Warning: ignoring invalid TAG config ({}). Using defaults.",

@@ -449,7 +449,7 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
             state.tour.step = 0;
         }
         Action::ReloadConfig => {
-            let (config, error) = load_app_config();
+            let (config, error) = load_app_config(&state.paths.config_path);
             if let Some(err) = error {
                 // Keep the current settings rather than silently falling back to defaults
                 state.config_error = Some(err.clone());
@@ -590,7 +590,7 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
                 return false;
             }
             state.config.run_in_background = !state.config.run_in_background;
-            if let Err(e) = save_app_config(&state.config) {
+            if let Err(e) = save_app_config(&state.paths.config_path, &state.config) {
                 push_toast(
                     state,
                     "Config",
