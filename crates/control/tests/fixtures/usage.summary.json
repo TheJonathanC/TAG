@@ -1,0 +1,22 @@
+{
+  "method": "usage.summary",
+  "params": {
+    "project": null,
+    "run": "r_1",
+    "since": null
+  },
+  "result": {
+    "by_profile": {
+      "claude": {
+        "cached": 5,
+        "cost_usd": 0.5,
+        "input": 10,
+        "output": 20
+      }
+    },
+    "cached": 5,
+    "cost_usd": 0.5,
+    "input": 10,
+    "output": 20
+  }
+}

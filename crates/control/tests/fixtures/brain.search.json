@@ -1,0 +1,19 @@
+{
+  "method": "brain.search",
+  "params": {
+    "kind": null,
+    "limit": 10,
+    "project": null,
+    "query": "jwt"
+  },
+  "result": [
+    {
+      "id": "pat_jwt",
+      "kind": "pattern",
+      "project": null,
+      "score": 1.5,
+      "snippet": "…",
+      "title": "JWT"
+    }
+  ]
+}

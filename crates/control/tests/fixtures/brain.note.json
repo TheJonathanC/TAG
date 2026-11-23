@@ -1,0 +1,14 @@
+{
+  "method": "brain.note",
+  "params": {
+    "body": "…",
+    "kind": "note",
+    "links": [],
+    "project": null,
+    "tags": [],
+    "title": "Run notes"
+  },
+  "result": {
+    "id": "note_run-notes"
+  }
+}

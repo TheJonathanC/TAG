@@ -1,0 +1,13 @@
+{
+  "method": "worktree.diff",
+  "params": {
+    "max_bytes": 65536,
+    "stat_only": false,
+    "worktree": "r_ab12-t1"
+  },
+  "result": {
+    "diff": "+x",
+    "stat": " a | 1 +",
+    "truncated": false
+  }
+}

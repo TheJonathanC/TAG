@@ -1,6 +1,7 @@
 pub mod action;
 pub mod command;
 pub mod config;
+pub mod control;
 pub mod event;
 pub mod pane;
 pub mod theme;

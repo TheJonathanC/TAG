@@ -1,0 +1,8 @@
+{
+  "method": "pane.set_visibility",
+  "params": {
+    "pane": 14,
+    "visibility": "pane"
+  },
+  "result": {}
+}

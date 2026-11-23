@@ -1,0 +1,14 @@
+{
+  "method": "worktree.list",
+  "params": {
+    "project": null
+  },
+  "result": [
+    {
+      "branch": "main",
+      "is_main": true,
+      "name": "main",
+      "path": "/src/tag"
+    }
+  ]
+}

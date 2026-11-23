@@ -56,6 +56,9 @@ pub enum AppEvent {
     FocusGained,
     FocusLost,
     UpdateAvailable(String),
+
+    // Control-plane request (from the control socket)
+    Control(crate::control::ControlEnvelope),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

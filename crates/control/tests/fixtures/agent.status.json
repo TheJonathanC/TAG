@@ -1,0 +1,12 @@
+{
+  "method": "agent.status",
+  "params": {
+    "pane": 3
+  },
+  "result": {
+    "last_hook": "TaskDone",
+    "since": "2026-11-23T09:15:00Z",
+    "status": "done",
+    "tokens": null
+  }
+}

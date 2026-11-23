@@ -1,0 +1,29 @@
+{
+  "method": "pane.spawn",
+  "params": {
+    "cwd": null,
+    "profile": "agy-neon",
+    "project": null,
+    "prompt": "go",
+    "run": "r_1",
+    "secrets": [],
+    "task": "t1",
+    "title": null,
+    "visibility": "hidden",
+    "workspace": null,
+    "worktree": {
+      "base": null,
+      "create": true,
+      "name": "r_ab12-t1"
+    }
+  },
+  "result": {
+    "pane": 14,
+    "worktree": {
+      "branch": "r_ab12-t1",
+      "is_main": false,
+      "name": "r_ab12-t1",
+      "path": "/src/tag/.worktrees/r_ab12-t1"
+    }
+  }
+}

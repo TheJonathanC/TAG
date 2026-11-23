@@ -1,0 +1,7 @@
+{
+  "method": "pane.kill",
+  "params": {
+    "pane": 14
+  },
+  "result": {}
+}

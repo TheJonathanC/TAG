@@ -1,0 +1,8 @@
+{
+  "method": "worktree.remove",
+  "params": {
+    "force": false,
+    "worktree": "feature-x"
+  },
+  "result": {}
+}

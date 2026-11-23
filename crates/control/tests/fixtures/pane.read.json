@@ -1,0 +1,14 @@
+{
+  "method": "pane.read",
+  "params": {
+    "lines": 80,
+    "max_bytes": 16384,
+    "pane": 3,
+    "strip_ansi": true
+  },
+  "result": {
+    "status": "idle",
+    "text": "hello",
+    "truncated": false
+  }
+}

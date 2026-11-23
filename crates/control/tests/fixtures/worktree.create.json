@@ -1,0 +1,12 @@
+{
+  "method": "worktree.create",
+  "params": {
+    "base": null,
+    "name": "feature-x",
+    "project": null
+  },
+  "result": {
+    "branch": "feature-x",
+    "path": "/src/tag/.worktrees/feature-x"
+  }
+}

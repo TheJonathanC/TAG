@@ -1,0 +1,14 @@
+{
+  "method": "worktree.merge",
+  "params": {
+    "into": null,
+    "require_tests": true,
+    "run": "r_1",
+    "task": "t1",
+    "worktree": null
+  },
+  "result": {
+    "merged_commit": "def456",
+    "queued": false
+  }
+}

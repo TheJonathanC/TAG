@@ -1,0 +1,26 @@
+{
+  "method": "brain.get_pattern",
+  "params": {
+    "id": "pat_jwt",
+    "include_files": true,
+    "max_bytes": 65536
+  },
+  "result": {
+    "files": [
+      {
+        "content": "x",
+        "path": "a.py",
+        "truncated": false
+      }
+    ],
+    "pattern": {
+      "backlinks": [],
+      "body": "b",
+      "frontmatter": {},
+      "id": "pat_jwt",
+      "kind": "pattern",
+      "links": [],
+      "title": "JWT"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "method": "workspaces.list",
+  "params": {
+    "project": null
+  },
+  "result": [
+    {
+      "active": true,
+      "id": 0,
+      "name": "main",
+      "panes": [
+        1,
+        2
+      ]
+    }
+  ]
+}
