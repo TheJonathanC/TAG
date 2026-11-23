@@ -182,39 +182,57 @@ fn handle(state: &mut State, method: &str, params: &Value) -> Result<Value, (i64
 }
 
 /// Serve MCP over `input`/`output` until EOF.
+/// One MCP session (protocol state plus the lazy control connection), shared by transports.
+pub struct McpSession {
+    state: State,
+}
+
+impl McpSession {
+    pub fn new(opts: McpOptions) -> Self {
+        Self {
+            state: State { opts, client: None },
+        }
+    }
+
+    /// Handle one JSON-RPC message; `None` for notifications (no reply).
+    pub fn handle_message(&mut self, msg: &Value) -> Option<Value> {
+        let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+        let id = msg.get("id").filter(|i| !i.is_null()).cloned()?;
+        if method.is_empty() {
+            return None;
+        }
+        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        Some(match handle(&mut self.state, method, &params) {
+            Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+            Err((code, message)) => {
+                json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+            }
+        })
+    }
+
+    /// Handle one raw message text (parse errors become a JSON-RPC error reply).
+    pub fn handle_text(&mut self, text: &str) -> Option<Value> {
+        match serde_json::from_str::<Value>(text) {
+            Ok(msg) => self.handle_message(&msg),
+            Err(e) => Some(
+                json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":format!("parse error: {e}")}}),
+            ),
+        }
+    }
+}
+
+/// Serve MCP over stdio: one JSON-RPC message per line.
 pub fn run_mcp<R: BufRead, W: Write>(input: R, mut output: W, opts: McpOptions) -> io::Result<()> {
-    let mut state = State { opts, client: None };
+    let mut session = McpSession::new(opts);
     for line in input.lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let msg: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(e) => {
-                let r = json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":format!("parse error: {e}")}});
-                writeln!(output, "{r}")?;
-                output.flush()?;
-                continue;
-            }
-        };
-        let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
-        let Some(id) = msg.get("id").filter(|i| !i.is_null()).cloned() else {
-            // Notification: no reply.
-            continue;
-        };
-        if method.is_empty() {
-            continue;
+        if let Some(reply) = session.handle_text(&line) {
+            writeln!(output, "{reply}")?;
+            output.flush()?;
         }
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        let reply = match handle(&mut state, method, &params) {
-            Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-            Err((code, message)) => {
-                json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
-            }
-        };
-        writeln!(output, "{reply}")?;
-        output.flush()?;
     }
     Ok(())
 }

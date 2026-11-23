@@ -11,6 +11,8 @@
 pub mod client;
 pub mod discovery;
 pub mod mcp;
+#[cfg(feature = "mcp-http")]
+pub mod mcp_http;
 pub mod methods;
 pub mod protocol;
 pub mod server;

@@ -23,6 +23,10 @@ path = "src/notify_bin.rs"
 name = "tag-notify"
 path = "src/tag_notify.rs"
 
+[features]
+# Optional MCP over HTTP (`tag mcp --http`); off by default.
+mcp-http = ["tag-control/mcp-http"]
+
 [dependencies]
 tag-core = { path = "../core", version = "0.1.0" }
 tag-pty = { path = "../pty", version = "0.1.0" }

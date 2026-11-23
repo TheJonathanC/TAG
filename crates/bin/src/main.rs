@@ -72,12 +72,20 @@ fn main() -> Result<(), anyhow::Error> {
         std::process::exit(ctl::run_ctl(cmd, json, socket)?);
     }
 
-    if let Some(Commands::Mcp { client, socket }) = cli.command {
+    if let Some(Commands::Mcp {
+        client,
+        socket,
+        http,
+    }) = cli.command
+    {
         let opts = tag_control::mcp::McpOptions {
             client_name: client,
             socket,
             token: None,
         };
+        if let Some(addr) = http {
+            return serve_mcp_http(addr, opts);
+        }
         return Ok(tag_control::mcp::run_mcp(
             std::io::stdin().lock(),
             std::io::stdout(),
@@ -239,6 +247,30 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     std::process::exit(0);
+}
+
+/// `tag mcp --http ADDR` (feature `mcp-http`).
+#[cfg(feature = "mcp-http")]
+fn serve_mcp_http(
+    addr: std::net::SocketAddr,
+    opts: tag_control::mcp::McpOptions,
+) -> Result<(), anyhow::Error> {
+    let token = std::env::var("TAG_MCP_HTTP_TOKEN").map_err(|_| {
+        anyhow::anyhow!("set TAG_MCP_HTTP_TOKEN to a random bearer token (16+ chars)")
+    })?;
+    let listener = tag_control::mcp_http::bind(addr)?;
+    eprintln!("tag mcp: serving MCP over HTTP at http://{addr}/mcp (bearer token required)");
+    Ok(tag_control::mcp_http::serve(listener, token, opts)?)
+}
+
+#[cfg(not(feature = "mcp-http"))]
+fn serve_mcp_http(
+    _addr: std::net::SocketAddr,
+    _opts: tag_control::mcp::McpOptions,
+) -> Result<(), anyhow::Error> {
+    anyhow::bail!(
+        "this build has no HTTP MCP transport; rebuild with `cargo build --features mcp-http`"
+    )
 }
 
 fn setup_panic_hook() {

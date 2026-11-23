@@ -33,6 +33,10 @@ pub(crate) enum Commands {
         /// Control socket path (default: auto-discover)
         #[arg(long)]
         socket: Option<PathBuf>,
+        /// Serve MCP over HTTP on this loopback address (e.g. 127.0.0.1:8765) instead of stdio.
+        /// Needs a build with `--features mcp-http` and a bearer token in $TAG_MCP_HTTP_TOKEN.
+        #[arg(long, value_name = "ADDR")]
+        http: Option<std::net::SocketAddr>,
     },
     /// Configure agent notification hooks
     SetupHooks {

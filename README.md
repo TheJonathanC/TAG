@@ -394,6 +394,13 @@ tiers = ["read", "act"]
 
 ---
 
+
+**Remote MCP over HTTP (optional, off by default).** Build with `cargo build --features mcp-http`,
+then `TAG_MCP_HTTP_TOKEN=<random 16+ chars> tag mcp --http 127.0.0.1:8765 --client claude-desktop`.
+It binds to loopback only, requires `Authorization: Bearer <token>` on every request, accepts
+`POST /mcp` (one JSON-RPC message per request), and applies the same tiers as stdio. Put it behind a
+tunnel you control; anyone with the token can act with that client's tiers.
+
 ## CLI reference and helper utilities
 
 ### `tag`

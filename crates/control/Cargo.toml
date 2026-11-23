@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+# Optional MCP over HTTP (loopback + bearer token); off by default.
+mcp-http = []
+
 [dependencies]
 tag-core = { path = "../core", version = "0.1.0" }
 tag-orchestrator = { path = "../orchestrator", version = "0.1.0" }
