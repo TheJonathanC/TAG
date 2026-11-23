@@ -1235,6 +1235,9 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             false
         }
         AppEvent::Tick => {
+            for pane in state.panes.values_mut() {
+                pane.on_tick();
+            }
             let now = chrono::Utc::now();
             let before = state.toasts.len();
             state.toasts.retain(|t| {

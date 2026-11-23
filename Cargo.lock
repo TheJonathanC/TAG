@@ -2460,6 +2460,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "ratatui",
+ "regex",
  "serde",
  "serde_json",
  "tag-core",
