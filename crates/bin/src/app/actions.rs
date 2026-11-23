@@ -271,6 +271,16 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
             let (closed, pids) = state.layout_mgr.close_workspace(ws_id);
             if closed {
                 for pid in &pids {
+                    // Workers of an active run keep running, hidden (§5.4).
+                    let in_run = state
+                        .pane_meta
+                        .get(pid)
+                        .and_then(|m| m.run.as_ref())
+                        .is_some_and(|r| state.runs.contains_key(r));
+                    if in_run {
+                        place_pane(state, *pid, tag_orchestrator::Visibility::Hidden, None);
+                        continue;
+                    }
                     if let Some(mut pane) = state.panes.remove(pid) {
                         pane.kill();
                     }

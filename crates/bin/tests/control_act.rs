@@ -130,3 +130,45 @@ fn shell_pane_send_and_visibility() {
 
     assert!(d.shutdown().success());
 }
+
+/// T2.2: moving a pane between hidden, card and pane never restarts its process.
+#[test]
+fn visibility_changes_keep_the_process() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut d = Daemon::start_in(None, Some(tmp.path()), |_| {});
+    let mut c = d.client("ctl");
+    let r = c
+        .call_raw(
+            "pane.spawn",
+            json!({"profile": "shell", "visibility": "hidden"}),
+        )
+        .unwrap();
+    let pane = r["pane"].as_u64().unwrap();
+    let pid_of = |c: &mut tag_control::ControlClient, tag: &str| -> String {
+        c.call_raw(
+            "pane.send",
+            json!({"pane": pane, "text": format!("echo {tag}=$$")}),
+        )
+        .unwrap();
+        eventually(10, || {
+            let t = c.call_raw("pane.read", json!({"pane": pane})).unwrap();
+            let text = t["text"].as_str().unwrap().to_string();
+            text.lines()
+                .find_map(|l| l.strip_prefix(&format!("{tag}=")).map(String::from))
+        })
+    };
+    let first = pid_of(&mut c, "A");
+    for (i, v) in ["pane", "card", "hidden", "pane"].iter().enumerate() {
+        c.call_raw(
+            "pane.set_visibility",
+            json!({"pane": pane, "visibility": v}),
+        )
+        .unwrap();
+        let p = c.call_raw("panes.list", json!({})).unwrap();
+        assert_eq!(p[0]["visibility"], *v);
+        assert_eq!(pid_of(&mut c, &format!("B{i}")), first);
+    }
+    let ws = c.call_raw("workspaces.list", json!({})).unwrap();
+    assert!(ws[0]["panes"].as_array().unwrap().contains(&json!(pane)));
+    assert!(d.shutdown().success());
+}
