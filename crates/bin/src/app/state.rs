@@ -108,6 +108,10 @@ pub(crate) struct AppState {
     pub(crate) runs: HashMap<String, ActiveRun>,
     /// Goal being typed for `^Space o` (orchestrate), when the prompt is open.
     pub(crate) goal_prompt: Option<String>,
+    /// Workers table overlay (`^Space A`).
+    pub(crate) workers: tag_ui::WorkersTableState,
+    /// Peek overlay (`^Space f`).
+    pub(crate) peek: Option<PeekState>,
     /// Registry of known projects (git repo roots), persisted in the state dir.
     pub(crate) projects: tag_projects::ProjectRegistry,
     /// Set when `projects.json` failed to parse; saving is skipped so it is never overwritten.
@@ -205,6 +209,8 @@ impl AppState {
             test_results: HashMap::new(),
             runs: HashMap::new(),
             goal_prompt: None,
+            workers: tag_ui::WorkersTableState::default(),
+            peek: None,
             projects,
             projects_load_error,
             active_project_name: None,

@@ -15,6 +15,7 @@ pub(crate) mod paths;
 pub(crate) mod render;
 pub(crate) mod state;
 pub(crate) mod tray;
+pub(crate) mod workers;
 
 pub(crate) use actions::*;
 pub(crate) use control::*;
@@ -31,3 +32,4 @@ pub(crate) use paths::*;
 pub(crate) use render::*;
 pub(crate) use state::*;
 pub(crate) use tray::*;
+pub(crate) use workers::*;
