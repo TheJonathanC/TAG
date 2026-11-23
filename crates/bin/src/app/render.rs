@@ -89,6 +89,7 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
             theme: &state.theme,
             version: TAG_VERSION,
             available_update: state.available_update.as_deref(),
+            project: state.active_project_name.as_deref(),
         },
     );
 

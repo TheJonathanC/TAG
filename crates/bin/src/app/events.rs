@@ -1253,6 +1253,11 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                     state.is_dirty = true;
                 }
             }
+            if state.last_project_check.elapsed() >= std::time::Duration::from_secs(3)
+                && state.refresh_active_project_name()
+            {
+                state.is_dirty = true;
+            }
             drain_background_results(state);
             if state.git_state.is_open && !state.git_loading {
                 let needs_reload = match &state.git_cache {
