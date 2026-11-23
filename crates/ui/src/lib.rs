@@ -1,3 +1,4 @@
+pub mod brain_overlay;
 pub mod empty_state;
 pub mod first_run_tour;
 pub mod help_overlay;
@@ -8,6 +9,9 @@ pub mod tab_tray;
 pub mod toast;
 pub mod which_key;
 
+pub use brain_overlay::{
+    render_brain_overlay, BrainFocus, BrainOverlayState, BrainPreview, BrainResult,
+};
 pub use empty_state::render_empty_state;
 pub use first_run_tour::{render_tour, TourState, TOUR_STEPS};
 pub use help_overlay::render_help_overlay;

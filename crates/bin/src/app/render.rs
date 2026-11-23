@@ -167,6 +167,10 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
         render_vault_overlay(frame, size, &state.vault, &state.vault_state, &state.theme);
     }
 
+    if state.brain_state.is_open {
+        tag_ui::render_brain_overlay(frame, size, &state.brain_state, &state.theme);
+    }
+
     if state.tour.is_active {
         render_tour(frame, size, &state.tour, &state.theme);
     }
@@ -201,4 +205,5 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.rename_prompt.is_some()
         || state.goal_prompt.is_some()
         || state.tab_tray.is_open
+        || state.brain_state.is_open
 }

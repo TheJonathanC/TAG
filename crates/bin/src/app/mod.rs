@@ -1,6 +1,7 @@
 //! Application state, event loop, rendering and input handling for the TAG UI.
 
 pub(crate) mod actions;
+pub(crate) mod brain_ui;
 pub(crate) mod control;
 pub(crate) mod control_act;
 pub(crate) mod control_danger;
@@ -17,6 +18,7 @@ pub(crate) mod state;
 pub(crate) mod tray;
 
 pub(crate) use actions::*;
+pub(crate) use brain_ui::*;
 pub(crate) use control::*;
 pub(crate) use control_act::*;
 pub(crate) use control_danger::*;

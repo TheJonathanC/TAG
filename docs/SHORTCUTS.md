@@ -13,6 +13,7 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | `Alt+1..9` | Switch Workspace | Jump directly to workspace 1..9 |
 | `Leader+w` | New Workspace | Create new workspace |
 | `Leader+b` | Tab Tray | Open cross-workspace pane tree and filter |
+| `Leader+B` | Brain Browser | Live brain search, document preview, outgoing links and backlinks (Tab to the link list, Enter follows a link, Esc closes) |
 | `Leader+Space` | Quick Switcher | Fuzzy jump to any pane or workspace |
 
 ## Layout & Tiling

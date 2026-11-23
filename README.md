@@ -613,6 +613,9 @@ tag brain show pat_jwt-middleware                  # document, links and backlin
 tag brain search "refresh token" [--kind K] [--limit N]
 tag brain rm pat_jwt-middleware                    # delete the file
 tag brain sync-agent-files [--create]              # write a managed brain block (brief summary, decisions, patterns, search hint) into CLAUDE.md, AGENTS.md and GEMINI.md; only text between the tag:brain markers is touched, missing files are created only with --create
+tag brain graph [--project P|.] [-o graph.html]    # self-contained HTML link graph (no CDN): force-directed, colored by kind, clustered by project, click a node to read it
 ```
 
 **Post-run notes.** When an orchestrated run finishes (`done` or `cancelled`) and no brain note mentions it, TAG writes `.tag/brain/notes/run-<id>.md` (goal, tasks with final state and report summaries, outcome, merged commits) and refreshes a managed "Recent runs" block (last 10, `[[note_run-<id>]]` links) between `<!-- tag:runs:start -->` and `<!-- tag:runs:end -->` in `brief.md`. Text outside the markers is never touched.
+
+**Brain browser.** `Leader+B` opens an overlay with a live full-text search box, a results list and a preview of the selected document with its links and backlinks. `Tab` moves to the link list, `Enter` follows a link, `Esc` closes.

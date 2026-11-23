@@ -8,6 +8,7 @@
 mod agent_files;
 mod doc;
 mod error;
+mod graph;
 mod index;
 mod init;
 mod pin;
@@ -22,6 +23,7 @@ pub use doc::{
     Frontmatter, Source,
 };
 pub use error::{Error, Result};
+pub use graph::{graph_html, render_graph_html};
 pub use index::{Brain, BrainRoot, DocMeta, ReindexStats, SearchHit};
 pub use init::{generate_brief, init_project, BriefDraft, InitReport};
 pub use pin::{find_doc_file, pin_pattern, remove_doc};

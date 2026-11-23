@@ -396,6 +396,11 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                 return false;
             }
 
+            if state.brain_state.is_open {
+                handle_brain_overlay_key(state, key);
+                return false;
+            }
+
             if state.snippet_state.is_open {
                 if let Some(ref mut fill) = state.snippet_state.fill {
                     match key.code {
