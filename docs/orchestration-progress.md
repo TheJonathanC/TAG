@@ -46,3 +46,4 @@ Plan: `docs/orchestration-roadmap.md`. Based on `origin/main` (`6403cc2`).
 | T5.6 brain graph + overlay | done | b5869e9 | `tag brain graph` (offline HTML), `Leader+B` overlay; Enter on a result moves to its links |
 | T5.7 post-run notes | done | 7c9d6ad | `.tag/brain/notes/run-<id>.md` + "Recent runs" block in brief.md on done/cancel |
 | T4.6 run auto-layout | done | 58ec43a | `run:<goal>` workspace created and focused when the conductor spawns; >3 tiled workers overflow to the run workspace's cards; the arrangement is rebuilt on each placement (user tweaks there get reset) |
+| T3.4 project switcher / T3.5 nav keys | done | 8e63a3a | **Key deviations:** `Leader+P` switcher (`P` was a duplicate paste key; paste stays on p/v/V), `Leader+\`` last workspace (`Leader+Tab` is hard-wired to next workspace), `Leader+!` next agent needing input; `Ctrl+O` in the switcher opens a folder as a project. Unopened registered projects show no workspaces |
