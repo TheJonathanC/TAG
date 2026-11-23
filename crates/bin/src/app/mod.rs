@@ -13,6 +13,7 @@ pub(crate) mod panes;
 pub(crate) mod paste;
 pub(crate) mod paths;
 pub(crate) mod render;
+pub(crate) mod sessions;
 pub(crate) mod state;
 pub(crate) mod tray;
 
@@ -29,5 +30,6 @@ pub(crate) use panes::*;
 pub(crate) use paste::*;
 pub(crate) use paths::*;
 pub(crate) use render::*;
+pub(crate) use sessions::*;
 pub(crate) use state::*;
 pub(crate) use tray::*;

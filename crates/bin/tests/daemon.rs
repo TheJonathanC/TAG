@@ -44,6 +44,10 @@ fn daemon_serves_hooks_and_shuts_down_cleanly() {
     let control = d.control_socket();
     let status = d.shutdown();
     assert!(status.success(), "daemon exit: {status:?}");
-    assert!(state_dir.join("session.json").exists());
+    let has_project_session = std::fs::read_dir(state_dir.join("projects"))
+        .unwrap()
+        .flatten()
+        .any(|e| e.path().join("session.json").exists());
+    assert!(has_project_session, "per-project session saved on exit");
     assert!(!control.exists(), "control socket removed on exit");
 }
