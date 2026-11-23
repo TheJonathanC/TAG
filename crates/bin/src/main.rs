@@ -17,6 +17,7 @@ use tracing_subscriber::FmtSubscriber;
 mod app;
 mod brain_cli;
 mod cli;
+mod ctl;
 mod session_io;
 mod sockets;
 mod tmux;
@@ -44,6 +45,10 @@ fn main() -> Result<(), anyhow::Error> {
             .enable_all()
             .build()?;
         return runtime.block_on(run_daemon(paths));
+    }
+
+    if let Some(Commands::Ctl { json, socket, cmd }) = cli.command {
+        std::process::exit(ctl::run_ctl(cmd, json, socket)?);
     }
 
     if let Some(Commands::Brain { cmd }) = cli.command {

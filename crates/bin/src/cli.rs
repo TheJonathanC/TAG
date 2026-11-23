@@ -66,6 +66,17 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::brain_cli::BrainCommands,
     },
+    /// Talk to the running TAG's control plane (spawn, read, wait, merge, ...)
+    Ctl {
+        /// Print raw JSON results
+        #[arg(long, global = true)]
+        json: bool,
+        /// Control socket path (default: $TAG_CONTROL_SOCKET or discovery)
+        #[arg(long, global = true)]
+        socket: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: crate::ctl::CtlCommands,
+    },
     /// Manage encrypted secrets in the TAG vault
     Vault {
         #[command(subcommand)]
