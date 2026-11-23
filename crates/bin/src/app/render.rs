@@ -265,3 +265,113 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.peek.is_some()
         || state.brain_state.is_open
 }
+
+#[cfg(test)]
+mod smoke_tests {
+    use super::*;
+    use crate::app::state::tests::{test_state, MockAgentPane};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use tag_core::pane::PaneId;
+    use tag_orchestrator::{
+        OrchestrationSettings, Run, RunState, RunStore, Task, TaskState, Visibility,
+    };
+
+    /// Render every overlay at several terminal sizes with live panes, a run and attention
+    /// items: catches layout-math panics the per-widget tests can't.
+    #[test]
+    fn full_frame_renders_every_overlay_at_every_size() {
+        let (mut state, _rx) = test_state();
+        for id in 1..=5u32 {
+            state.panes.insert(
+                PaneId(id),
+                Box::new(MockAgentPane {
+                    id: PaneId(id),
+                    status: if id == 2 { "awaiting-input" } else { "running" },
+                }),
+            );
+        }
+        place_pane(&mut state, PaneId(1), Visibility::Pane, None);
+        place_pane(&mut state, PaneId(2), Visibility::Pane, None);
+        place_pane(&mut state, PaneId(3), Visibility::Card, None);
+        place_pane(&mut state, PaneId(4), Visibility::Card, None);
+        place_pane(&mut state, PaneId(5), Visibility::Hidden, None);
+        let mut run = Run::new(
+            "r_20261123_0915_ab12",
+            "p",
+            "a goal that is rather long indeed",
+            chrono::Utc::now(),
+        );
+        run.state = RunState::Running;
+        for (i, st) in [TaskState::Working, TaskState::Review, TaskState::Merged]
+            .iter()
+            .enumerate()
+        {
+            let mut t = Task::new(format!("t{}", i + 1), "some task title", "p");
+            t.state = *st;
+            t.pane = Some(3 + i as u64);
+            run.tasks.push(t);
+        }
+        state.runs.insert(
+            run.id.clone(),
+            ActiveRun {
+                store: RunStore::new(state.paths.state_dir.join("runs")),
+                run,
+                repo: state.paths.state_dir.clone(),
+                settings: OrchestrationSettings::builtin(),
+                announced_all_review: false,
+                workspace: None,
+            },
+        );
+        state.attention_queue.push(
+            Some(PaneId(2)),
+            "run r_20261123_0915_ab12".into(),
+            tag_core::event::HookEvent::NeedsPermission,
+            "Merge t2?".into(),
+            None,
+        );
+
+        type Opener = fn(&mut AppState);
+        let overlays: Vec<(&str, Opener)> = vec![
+            ("none", |_| {}),
+            ("workers", |s| s.workers.is_open = true),
+            ("peek", |s| {
+                s.peek = Some(PeekState {
+                    pane: PaneId(3),
+                    input: false,
+                })
+            }),
+            ("run_view", |s| s.run_view.is_open = true),
+            ("attention", |s| s.attention_state.is_open = true),
+            ("brain", |s| s.brain_state.is_open = true),
+            ("goal", |s| s.goal_prompt = Some("x".repeat(200))),
+            ("reply", |s| {
+                s.reply_prompt = Some((PaneId(2), "hello".into()))
+            }),
+            ("tray", |s| s.tab_tray.is_open = true),
+            ("help", |s| s.help_open = true),
+        ];
+        for (w, h) in [(40u16, 10u16), (80, 24), (200, 60)] {
+            for (name, open) in &overlays {
+                let (mut s2, _rx2) = (std::mem::replace(&mut state, test_state().0), ());
+                s2.term_width = w;
+                s2.term_height = h;
+                open(&mut s2);
+                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                term.draw(|f| render_frame(f, &mut s2))
+                    .unwrap_or_else(|e| panic!("{name} at {w}x{h}: {e}"));
+                // Reset overlays for the next case.
+                s2.workers.is_open = false;
+                s2.peek = None;
+                s2.run_view.is_open = false;
+                s2.attention_state.is_open = false;
+                s2.brain_state.is_open = false;
+                s2.goal_prompt = None;
+                s2.reply_prompt = None;
+                s2.tab_tray.is_open = false;
+                s2.help_open = false;
+                state = s2;
+            }
+        }
+    }
+}
