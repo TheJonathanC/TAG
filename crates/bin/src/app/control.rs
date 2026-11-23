@@ -33,7 +33,10 @@ pub(crate) fn handle_control(state: &mut AppState, env: ControlEnvelope) {
         params,
         reply,
     } = env;
-    if handle_act(state, &client, &method, params.clone(), reply.clone()).is_some() {
+    if handle_act(state, &client, &method, params.clone(), reply.clone()).is_some()
+        || handle_dangerous(state, &client, &method, params.clone(), reply.clone()).is_some()
+        || handle_runs(state, &client, &method, params.clone(), reply.clone()).is_some()
+    {
         return;
     }
     let result = match method.as_str() {
