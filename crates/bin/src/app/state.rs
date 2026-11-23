@@ -117,6 +117,10 @@ pub(crate) struct AppState {
     /// Repo root the cached name was resolved from, and when it was last checked.
     pub(crate) active_project_root: Option<std::path::PathBuf>,
     pub(crate) last_project_check: std::time::Instant,
+    /// Id of the project whose workspaces are in `layout_mgr`.
+    pub(crate) active_project_id: Option<String>,
+    /// Layouts of every other project (their panes stay in `panes`).
+    pub(crate) parked: HashMap<String, ParkedProject>,
 }
 
 /// Capacity of the [`StateEvent`] broadcast channel.
@@ -210,6 +214,8 @@ impl AppState {
             active_project_name: None,
             active_project_root: None,
             last_project_check: std::time::Instant::now(),
+            active_project_id: None,
+            parked: HashMap::new(),
         })
     }
 

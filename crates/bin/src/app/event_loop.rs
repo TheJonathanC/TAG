@@ -11,7 +11,7 @@ use tag_agents::HookServer;
 use tag_core::action::Action;
 use tag_core::event::AppEvent;
 use tag_core::pane::{PaneId, PaneKind};
-use tag_layout::{LayoutManager, SavedSession, Workspace};
+use tag_layout::{LayoutManager, SavedPane, SavedSession, Workspace};
 use tag_pty::PtyPane;
 use tag_ui::ToastLevel;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -191,132 +191,209 @@ pub(crate) async fn run_app(
     Ok(())
 }
 
-/// Restore the saved session (panes and workspaces) from `state.paths.session_path`.
-/// `width`/`height` are the terminal size used to size respawned PTYs.
-pub(crate) fn restore_session(state: &mut AppState, width: u16, height: u16) {
-    // Restore saved session if present, otherwise start with empty workspace showing ASCII art
-    let session_path = state.paths.session_path.clone();
-    if session_path.exists() {
-        if let Ok(saved) = SavedSession::load_from_file(&session_path) {
-            if !saved.panes.is_empty() {
-                let mut max_pid = 0u32;
-                for (pid, sp) in saved.panes {
-                    max_pid = max_pid.max(pid.0);
-                    let env = if state.vault.is_unlocked() {
-                        state.vault.get_env_set()
+/// Respawn one saved pane under id `pid` (applet or PTY). Returns whether it is now in `state.panes`.
+fn spawn_saved_pane(
+    state: &mut AppState,
+    pid: PaneId,
+    sp: SavedPane,
+    width: u16,
+    height: u16,
+) -> bool {
+    let env = if state.vault.is_unlocked() {
+        state.vault.get_env_set()
+    } else {
+        HashMap::new()
+    };
+    if sp.kind == PaneKind::Applet {
+        let name = sp.args.first().map(String::as_str).unwrap_or("");
+        if let Some(mut applet) = make_applet(name, pid) {
+            applet.set_title(sp.title);
+            state.panes.insert(pid, applet);
+        }
+        return state.panes.contains_key(&pid);
+    }
+
+    let mut cmd = sp.command;
+    let mut args = sp.args;
+    let mut title = sp.title;
+    let mut kind = sp.kind;
+
+    // Sanitize tmux session on restore
+    if cmd.as_deref() == Some("tmux") || kind == PaneKind::Tmux || title.starts_with("tmux:") {
+        let sess_opt = if let Some(idx) = args.iter().position(|a| a == "-s" || a == "-t") {
+            args.get(idx + 1)
+                .map(|s| tag_pty::clean_tmux_session_name(s))
+        } else {
+            title
+                .strip_prefix("tmux: ")
+                .map(tag_pty::clean_tmux_session_name)
+        };
+
+        let target_session = match sess_opt {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                // Fallback: find existing active tmux session if available
+                if let Ok(output) = std::process::Command::new("tmux")
+                    .args(["list-sessions", "-F", "#{session_name}"])
+                    .output()
+                {
+                    if output.status.success() {
+                        let text = String::from_utf8_lossy(&output.stdout);
+                        text.lines()
+                            .map(|l| tag_pty::clean_tmux_session_name(l.trim()))
+                            .find(|l| !l.is_empty())
+                            .unwrap_or_else(|| "0".to_string())
                     } else {
-                        HashMap::new()
-                    };
-                    if sp.kind == PaneKind::Applet {
-                        let name = sp.args.first().map(String::as_str).unwrap_or("");
-                        if let Some(mut applet) = make_applet(name, pid) {
-                            applet.set_title(sp.title);
-                            state.panes.insert(pid, applet);
-                        }
-                        continue;
+                        "0".to_string()
                     }
-
-                    let mut cmd = sp.command;
-                    let mut args = sp.args;
-                    let mut title = sp.title;
-                    let mut kind = sp.kind;
-
-                    // Sanitize tmux session on restore
-                    if cmd.as_deref() == Some("tmux")
-                        || kind == PaneKind::Tmux
-                        || title.starts_with("tmux:")
-                    {
-                        let sess_opt =
-                            if let Some(idx) = args.iter().position(|a| a == "-s" || a == "-t") {
-                                args.get(idx + 1)
-                                    .map(|s| tag_pty::clean_tmux_session_name(s))
-                            } else {
-                                title
-                                    .strip_prefix("tmux: ")
-                                    .map(tag_pty::clean_tmux_session_name)
-                            };
-
-                        let target_session = match sess_opt {
-                            Some(s) if !s.is_empty() => s,
-                            _ => {
-                                // Fallback: find existing active tmux session if available
-                                if let Ok(output) = std::process::Command::new("tmux")
-                                    .args(["list-sessions", "-F", "#{session_name}"])
-                                    .output()
-                                {
-                                    if output.status.success() {
-                                        let text = String::from_utf8_lossy(&output.stdout);
-                                        text.lines()
-                                            .map(|l| tag_pty::clean_tmux_session_name(l.trim()))
-                                            .find(|l| !l.is_empty())
-                                            .unwrap_or_else(|| "0".to_string())
-                                    } else {
-                                        "0".to_string()
-                                    }
-                                } else {
-                                    "0".to_string()
-                                }
-                            }
-                        };
-
-                        cmd = Some("tmux".to_string());
-                        args = vec![
-                            "new-session".to_string(),
-                            "-A".to_string(),
-                            "-s".to_string(),
-                            target_session.clone(),
-                        ];
-                        title = format!("tmux: {}", target_session);
-                        if kind != PaneKind::Agent && kind != PaneKind::Donut {
-                            kind = PaneKind::Tmux;
-                        }
-                    }
-
-                    if let Ok(pane) = PtyPane::spawn(
-                        pid,
-                        title,
-                        kind,
-                        cmd,
-                        &args,
-                        &env,
-                        sp.cwd.or_else(|| std::env::current_dir().ok()),
-                        width.saturating_sub(2),
-                        height.saturating_sub(4),
-                        state.config.scrollback_lines,
-                        state.event_tx.clone(),
-                    ) {
-                        state.panes.insert(pid, Box::new(pane));
-                    }
-                }
-                if !state.panes.is_empty() {
-                    let mut workspaces: Vec<Workspace> =
-                        saved.workspaces.into_iter().map(Into::into).collect();
-                    for ws in &mut workspaces {
-                        for pid in ws.all_panes() {
-                            if !state.panes.contains_key(&pid) {
-                                ws.remove_pane(pid);
-                            }
-                        }
-                        ws.minimized_panes.retain(|p| state.panes.contains_key(p));
-                    }
-                    state.layout_mgr =
-                        LayoutManager::from_workspaces(workspaces, saved.active_workspace_id);
-                    // Drop layout slots for panes that failed to respawn
-                    let live: std::collections::HashSet<PaneId> =
-                        state.panes.keys().copied().collect();
-                    state.layout_mgr.retain_panes(&|p| live.contains(&p));
-                    // Panes not referenced by any workspace would be unreachable
-                    let placed: std::collections::HashSet<PaneId> = state
-                        .layout_mgr
-                        .workspaces()
-                        .iter()
-                        .flat_map(|w| w.all_panes().into_iter().chain(w.minimized_panes.clone()))
-                        .collect();
-                    state.panes.retain(|pid, _| placed.contains(pid));
-                    state.next_pane_id = max_pid + 1;
+                } else {
+                    "0".to_string()
                 }
             }
+        };
+
+        cmd = Some("tmux".to_string());
+        args = vec![
+            "new-session".to_string(),
+            "-A".to_string(),
+            "-s".to_string(),
+            target_session.clone(),
+        ];
+        title = format!("tmux: {}", target_session);
+        if kind != PaneKind::Agent && kind != PaneKind::Donut {
+            kind = PaneKind::Tmux;
         }
+    }
+
+    match PtyPane::spawn(
+        pid,
+        title,
+        kind,
+        cmd,
+        &args,
+        &env,
+        sp.cwd.or_else(|| std::env::current_dir().ok()),
+        width.saturating_sub(2),
+        height.saturating_sub(4),
+        state.config.scrollback_lines,
+        state.event_tx.clone(),
+    ) {
+        Ok(pane) => {
+            state.panes.insert(pid, Box::new(pane));
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Respawn the panes of one saved session and build its layouts. Pane ids that collide with
+/// panes already in `state.panes` (another project's) get fresh ids, remapped in the layouts.
+/// Panes that fail to respawn, or that no workspace references, are dropped.
+/// Returns `None` when nothing was restored.
+pub(crate) fn restore_project_session(
+    state: &mut AppState,
+    saved: SavedSession,
+    width: u16,
+    height: u16,
+) -> Option<LayoutManager> {
+    if saved.panes.is_empty() {
+        return None;
+    }
+    let max_pid = saved.panes.keys().map(|p| p.0).max().unwrap_or(0);
+    state.next_pane_id = state.next_pane_id.max(max_pid + 1);
+    let mut remap: HashMap<PaneId, PaneId> = HashMap::new();
+    for pid in saved.panes.keys() {
+        if state.panes.contains_key(pid) {
+            remap.insert(*pid, state.allocate_pane_id());
+        }
+    }
+    let mut spawned: std::collections::HashSet<PaneId> = std::collections::HashSet::new();
+    let mut entries: Vec<_> = saved.panes.into_iter().collect();
+    entries.sort_by_key(|(pid, _)| pid.0);
+    for (old, sp) in entries {
+        let pid = remap.get(&old).copied().unwrap_or(old);
+        if spawn_saved_pane(state, pid, sp, width, height) {
+            spawned.insert(pid);
+        }
+    }
+    if spawned.is_empty() {
+        return None;
+    }
+    let mut workspaces: Vec<Workspace> = saved.workspaces.into_iter().map(Into::into).collect();
+    for ws in &mut workspaces {
+        ws.remap_panes(&remap);
+    }
+    let mut layout = LayoutManager::from_workspaces(workspaces, saved.active_workspace_id);
+    // Drop layout slots for panes that failed to respawn
+    layout.retain_panes(&|p| spawned.contains(&p));
+    // Panes not referenced by any workspace would be unreachable
+    let placed: std::collections::HashSet<PaneId> = layout
+        .workspaces()
+        .iter()
+        .flat_map(|w| w.all_panes().into_iter().chain(w.minimized_panes.clone()))
+        .collect();
+    for pid in spawned.difference(&placed) {
+        if let Some(mut pane) = state.panes.remove(pid) {
+            pane.kill();
+        }
+    }
+    Some(layout)
+}
+
+/// Restore every project's saved session from `<state_dir>/projects/*/session.json`; the
+/// active project is the one recorded in `<state_dir>/sessions.json` (else the first).
+/// With no per-project sessions, the legacy global session (`state.paths.session_path`) is
+/// imported once into the `default` project and a `migrated-v1` marker is written.
+/// `width`/`height` are the terminal size used to size respawned PTYs.
+pub(crate) fn restore_session(state: &mut AppState, width: u16, height: u16) {
+    let state_dir = state.paths.state_dir.clone();
+    let mut sessions = read_project_sessions(&state_dir);
+    let mut migrated = false;
+    if sessions.is_empty()
+        && !any_project_session_exists(&state_dir)
+        && !migration_marker_path(&state_dir).exists()
+        && state.paths.session_path.exists()
+    {
+        if let Ok(saved) = SavedSession::load_from_file(&state.paths.session_path) {
+            let project = state.projects.default_project(&dirs_or_home());
+            sessions.push((project.id, saved));
+            migrated = true;
+        }
+    }
+
+    let mut restored: Vec<(String, LayoutManager)> = Vec::new();
+    for (id, saved) in sessions {
+        if let Some(layout) = restore_project_session(state, saved, width, height) {
+            restored.push((id, layout));
+        }
+    }
+    if !restored.is_empty() {
+        let wanted = read_active_project_index(&state_dir);
+        let idx = wanted
+            .and_then(|w| restored.iter().position(|(id, _)| *id == w))
+            .unwrap_or(0);
+        let (active_id, layout) = restored.remove(idx);
+        state.layout_mgr = layout;
+        for (id, layout) in restored {
+            state.parked.insert(id, ParkedProject { layout });
+        }
+        state.projects.set_active(&active_id);
+        if let Some(p) = state.projects.get(&active_id).cloned() {
+            state.active_project_name = Some(p.name);
+            state.active_project_root = Some(p.root);
+        }
+        state.active_project_id = Some(active_id);
+        if state.projects_load_error.is_none() {
+            let _ = state.projects.save();
+        }
+    }
+    state.ensure_active_project();
+    if migrated {
+        save_session_to_disk(state);
+        let _ = std::fs::write(
+            migration_marker_path(&state_dir),
+            "legacy session.json imported into per-project sessions\n",
+        );
     }
 }
 

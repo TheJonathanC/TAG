@@ -18,6 +18,9 @@ pub struct SavedPane {
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    /// `"hidden"`, `"card"` or `"pane"`; `None` for ordinary tiled panes.
+    #[serde(default)]
+    pub visibility: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,8 +35,14 @@ pub struct SavedWorkspace {
     pub minimized_panes: Vec<PaneId>,
 }
 
+/// Current on-disk session format version.
+pub const SESSION_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSession {
+    /// Format version: 0 for legacy (v1) files without the field, 2 when written by this build.
+    #[serde(default)]
+    pub version: u32,
     pub active_workspace_id: WorkspaceId,
     pub workspaces: Vec<SavedWorkspace>,
     pub panes: HashMap<PaneId, SavedPane>,
@@ -42,6 +51,7 @@ pub struct SavedSession {
 impl SavedSession {
     pub fn new(active_workspace_id: WorkspaceId) -> Self {
         Self {
+            version: SESSION_VERSION,
             active_workspace_id,
             workspaces: Vec::new(),
             panes: HashMap::new(),
@@ -130,6 +140,7 @@ mod tests {
                 cwd: Some(PathBuf::from("/tmp")),
                 command: Some("htop".into()),
                 args: vec!["-d".into(), "10".into()],
+                visibility: Some("card".into()),
             },
         );
 
@@ -144,7 +155,19 @@ mod tests {
         let pane = loaded.panes.get(&PaneId(1)).unwrap();
         assert_eq!(pane.command.as_deref(), Some("htop"));
         assert_eq!(pane.args, vec!["-d", "10"]);
+        assert_eq!(loaded.version, SESSION_VERSION);
+        assert_eq!(pane.visibility.as_deref(), Some("card"));
 
         let _ = std::fs::remove_file(session_file);
+    }
+
+    #[test]
+    fn v1_fixture_loads_with_defaults() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/session_v1.json");
+        let loaded = SavedSession::load_from_file(&path).unwrap();
+        assert_eq!(loaded.version, 0);
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.panes.len(), 2);
+        assert!(loaded.panes.values().all(|p| p.visibility.is_none()));
     }
 }

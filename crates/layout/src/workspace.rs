@@ -33,6 +33,21 @@ impl Workspace {
         }
     }
 
+    /// Rewrite pane ids (tree, focus, zoom, minimized list) via `map`; ids not in the map are kept.
+    /// The undo history is dropped since it would reference the old ids.
+    pub fn remap_panes(&mut self, map: &HashMap<PaneId, PaneId>) {
+        let f = |p: PaneId| map.get(&p).copied().unwrap_or(p);
+        if let Some(root) = self.root.as_mut() {
+            root.remap_panes(&f);
+        }
+        self.focused_pane = self.focused_pane.map(f);
+        self.zoomed_pane = self.zoomed_pane.map(f);
+        for p in &mut self.minimized_panes {
+            *p = f(*p);
+        }
+        self.undo_stack.clear();
+    }
+
     pub fn save_undo_state(&mut self) {
         if let Some(ref root) = self.root {
             self.undo_stack.push(root.clone());

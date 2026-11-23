@@ -102,6 +102,17 @@ impl LayoutNode {
         }
     }
 
+    /// Rewrite every leaf pane id through `f`.
+    pub fn remap_panes(&mut self, f: &dyn Fn(PaneId) -> PaneId) {
+        match self {
+            LayoutNode::Leaf(id) => *id = f(*id),
+            LayoutNode::Split { first, second, .. } => {
+                first.remap_panes(f);
+                second.remap_panes(f);
+            }
+        }
+    }
+
     pub fn all_panes(&self) -> Vec<PaneId> {
         let mut panes = Vec::new();
         self.collect_panes(&mut panes);
