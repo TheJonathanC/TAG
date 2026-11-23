@@ -69,6 +69,13 @@ pub(crate) fn handle_runs(
         "task.report" => parse_params(params).and_then(|p| task_report(state, client, p)),
         "run.approve_plan" => parse_params(params).and_then(|p| approve_plan(state, client, p)),
         "run.cancel" => parse_params(params).and_then(|p| run_cancel(state, client, p)),
+        "_internal.diffstat" => {
+            if let (Some(w), Some(stat)) = (params["worktree"].as_str(), params["stat"].as_str()) {
+                state.diffstat_cache.insert(w.to_string(), stat.to_string());
+                state.is_dirty = true;
+            }
+            Ok(Value::Null)
+        }
         "_internal.toast" => {
             let ok = params["ok"].as_bool().unwrap_or(false);
             push_toast(

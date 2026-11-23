@@ -112,6 +112,12 @@ pub(crate) struct AppState {
     pub(crate) attention_actions: HashMap<u64, AttentionAction>,
     /// Text being typed as a reply to a pane (attention quick action `r`).
     pub(crate) reply_prompt: Option<(PaneId, String)>,
+    /// Run view overlay (`Leader+O`).
+    pub(crate) run_view: tag_ui::RunViewState,
+    /// Waiting for `y` to kill the selected task's pane in the run view.
+    pub(crate) run_view_confirm_kill: bool,
+    /// Diff stats per worktree path, loaded in the background for the run view.
+    pub(crate) diffstat_cache: HashMap<String, String>,
     /// Workers table overlay (`^Space A`).
     pub(crate) workers: tag_ui::WorkersTableState,
     /// Peek overlay (`^Space f`).
@@ -219,6 +225,9 @@ impl AppState {
             goal_prompt: None,
             attention_actions: HashMap::new(),
             reply_prompt: None,
+            run_view: tag_ui::RunViewState::default(),
+            run_view_confirm_kill: false,
+            diffstat_cache: HashMap::new(),
             workers: tag_ui::WorkersTableState::default(),
             peek: None,
             projects,

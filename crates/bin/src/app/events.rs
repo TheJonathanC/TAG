@@ -210,6 +210,10 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             if handle_peek_key(state, &key) {
                 return false;
             }
+            if state.run_view.is_open {
+                handle_run_view_key(state, key);
+                return false;
+            }
             if state.workers.is_open {
                 handle_workers_key(state, &key);
                 return false;

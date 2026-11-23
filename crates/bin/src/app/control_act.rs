@@ -38,6 +38,9 @@ pub(crate) struct TestRecord {
     pub(crate) exit_code: i32,
     pub(crate) dirty: bool,
     pub(crate) at: chrono::DateTime<chrono::Utc>,
+    /// Last lines of output.
+    #[serde(default)]
+    pub(crate) tail: String,
 }
 
 /// Extra launch settings used by the orchestrator (token env, branch naming).
@@ -694,6 +697,7 @@ fn tests_run(state: &mut AppState, client: &ClientCtx, p: TestsRunParams, reply:
                 exit_code,
                 dirty,
                 at: chrono::Utc::now(),
+                tail: tail_lines(&strip_ansi(&output), 60, 8192),
             };
             let (record_reply, _rx) = ReplyHandle::new();
             continue_in_loop(

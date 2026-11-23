@@ -274,6 +274,7 @@ mod tests {
             exit_code: code,
             dirty,
             at: chrono::Utc::now(),
+            tail: String::new(),
         }
     }
 

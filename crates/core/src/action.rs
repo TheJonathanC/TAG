@@ -39,6 +39,8 @@ pub enum Action {
     RenamePane(Option<PaneId>),
     /// Prompt for a goal and start an orchestration run.
     Orchestrate,
+    /// Open the run view for the active orchestration run.
+    ToggleRunView,
     /// Open/close the workers table overlay.
     ToggleWorkers,
     /// Peek (floating live view of) the selected card / next worker needing input.

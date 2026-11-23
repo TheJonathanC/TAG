@@ -5,6 +5,7 @@ pub mod help_overlay;
 pub mod palette;
 pub mod peek;
 pub mod rename_modal;
+pub mod run_view;
 pub mod status_bar;
 pub mod tab_tray;
 pub mod toast;
@@ -23,6 +24,9 @@ pub use palette::{
 };
 pub use peek::{peek_area, peek_title, render_peek_frame};
 pub use rename_modal::{render_prompt_modal, render_rename_modal, RenameModalState};
+pub use run_view::{
+    render_run_view, run_view_area, task_glyph, RunTaskRow, RunViewData, RunViewState,
+};
 pub use status_bar::{
     hit_test_status_bar, render_status_bar, StatusBarClickTarget, StatusBarProps,
 };

@@ -148,6 +148,15 @@ impl CommandRegistry {
                 action: Action::Peek,
             },
             Command {
+                id: "run.view".into(),
+                name: "Orchestrate: Run View".into(),
+                category: CommandCategory::Layout,
+                description: "Tasks of the active run, live worker output, diff stats and tests"
+                    .into(),
+                default_shortcut: Some("^Space+O".into()),
+                action: Action::ToggleRunView,
+            },
+            Command {
                 id: "pane.rename".into(),
                 name: "Rename Pane".into(),
                 category: CommandCategory::Layout,

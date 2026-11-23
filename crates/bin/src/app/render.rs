@@ -209,6 +209,10 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     if let Some(ref rename_state) = state.rename_prompt {
         render_rename_modal(frame, size, rename_state, &state.theme);
     }
+    if state.run_view.is_open {
+        let data = build_run_view_data(state);
+        tag_ui::render_run_view(frame, size, &data, &state.run_view, &state.theme);
+    }
     if let Some((pane, ref text)) = state.reply_prompt {
         let title = state
             .panes
@@ -252,6 +256,7 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.rename_prompt.is_some()
         || state.goal_prompt.is_some()
         || state.reply_prompt.is_some()
+        || state.run_view.is_open
         || state.tab_tray.is_open
         || state.workers.is_open
         || state.peek.is_some()
