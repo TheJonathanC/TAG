@@ -466,6 +466,21 @@ name = "Antigravity"
 command = "agy"
 args = []
 status_patterns = ["(?i)allow", "(?i)proceed\\?"]
+
+# Optional orchestration keys (all have defaults; old configs keep working):
+[agents.agy-neon]
+command = "agy"
+model = "gemini-4-neon-high"          # appends `model_flag` (default --model) + model
+roles = ["conductor", "worker"]       # conductor | worker | reviewer
+prompt_delivery = "arg"               # type (default) | arg | stdin
+prompt_args = ["-i", "{prompt}"]      # {prompt} substituted when prompt_delivery = "arg"
+resume_args = ["--conversation", "{session_id}"]
+session_id_args = []                  # e.g. ["--session-id", "{session_id}"] to pick an id up front
+mcp_config_args = []                  # e.g. ["--mcp-config", "{mcp_config_path}"]
+done_signal = ["osc", "idle"]         # hook | osc | idle | regex | exit
+done_regex = "DONE"                   # used with done_signal = ["regex"]
+idle_done_secs = 45                   # 0 = disabled
+max_concurrent = 6                    # 0 = unlimited
 ```
 
 ---
