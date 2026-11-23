@@ -558,6 +558,9 @@ pub struct RunCreateParams {
     /// Spawn a conductor agent for the run.
     #[serde(default)]
     pub spawn_conductor: bool,
+    /// Override the project's `require_plan_approval`.
+    #[serde(default)]
+    pub require_plan_approval: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

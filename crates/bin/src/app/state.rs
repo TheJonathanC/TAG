@@ -106,6 +106,8 @@ pub(crate) struct AppState {
     pub(crate) test_results: HashMap<std::path::PathBuf, TestRecord>,
     /// Orchestration runs managed by this instance, by run id.
     pub(crate) runs: HashMap<String, ActiveRun>,
+    /// Goal being typed for `^Space o` (orchestrate), when the prompt is open.
+    pub(crate) goal_prompt: Option<String>,
     /// Registry of known projects (git repo roots), persisted in the state dir.
     pub(crate) projects: tag_projects::ProjectRegistry,
     /// Set when `projects.json` failed to parse; saving is skipped so it is never overwritten.
@@ -202,6 +204,7 @@ impl AppState {
             last_output: HashMap::new(),
             test_results: HashMap::new(),
             runs: HashMap::new(),
+            goal_prompt: None,
             projects,
             projects_load_error,
             active_project_name: None,

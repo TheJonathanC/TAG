@@ -419,6 +419,23 @@ Built-in defaults: `ctl` gets `read`/`act`/`dangerous`, `mcp` and `claude-deskto
 any other client name gets `read`. Act and dangerous calls are logged to
 `~/.local/state/tag/control-audit.jsonl`.
 
+### `tag orchestrate`
+Start an orchestration run in the running TAG (UI or `tag daemon`): a conductor agent plans the goal,
+TAG runs each task in its own worker agent and git worktree, and merges follow the merge policy.
+
+```bash
+tag orchestrate "Add OAuth login" [--conductor claude] [--workers agy-neon,claude] \
+    [--merge ask|auto] [--budget 5] [--yes]   # --yes skips plan approval
+```
+
+Inside the UI, `Leader+o` does the same. Defaults come from `<repo>/.tag/project.toml`
+(`default_conductor`, `default_workers`, `merge_policy`, `require_plan_approval`, `max_workers`,
+`worker_visibility`, `budget_usd`, `protected_paths`, `test_command`). The conductor and worker
+prompts are Markdown templates in `~/.config/tag/prompts/` (installed on first run, never overwritten).
+Agents launched for a run get a scoped `TAG_CONTROL_TOKEN`: workers can only report on and test their
+own task; conductors can only manage their own run, and only merge when the run's policy is `auto`
+(otherwise the merge waits for you in the attention queue).
+
 ### `tag ctl`
 Client for the running TAG's control plane (works from inside TAG panes). The socket comes from `--socket`, else `$TAG_CONTROL_SOCKET`, else discovery; `$TAG_CONTROL_TOKEN` supplies a scoped token. Add `--json` to any subcommand for the raw JSON result. Errors print `error: <message> (code <code>)` to stderr; exit code 1 on error, 2 on `wait` timeout, 3 when TAG is not running.
 

@@ -381,6 +381,7 @@ pub(crate) fn create_run(state: &mut AppState, p: RunCreateParams) -> Result<Run
         budget_usd: p.budget,
         default_workers: p.worker_profiles.clone(),
         default_conductor: p.conductor_profile.clone(),
+        require_plan_approval: p.require_plan_approval,
         ..Default::default()
     };
     let settings = settings_for(&repo, &overrides);
@@ -427,6 +428,39 @@ pub(crate) fn create_run(state: &mut AppState, p: RunCreateParams) -> Result<Run
         spawn_conductor(state, &id, &conductor_profile)?;
     }
     Ok(state.runs[&id].run.clone())
+}
+
+/// `^Space o`: start a run with project defaults and spawn its conductor.
+pub(crate) fn start_run_from_ui(state: &mut AppState, goal: String) {
+    let params = RunCreateParams {
+        goal,
+        project: None,
+        conductor_profile: None,
+        worker_profiles: None,
+        merge_policy: None,
+        budget: None,
+        spawn_conductor: true,
+        require_plan_approval: None,
+    };
+    match create_run(state, params) {
+        Ok(run) => push_toast(
+            state,
+            "Run Started",
+            format!(
+                "{}: the conductor is planning. Approve the plan from the attention queue (^Space a).",
+                run.id
+            ),
+            tag_ui::ToastLevel::Success,
+            6,
+        ),
+        Err(e) => push_toast(
+            state,
+            "Orchestrate Failed",
+            e.message,
+            tag_ui::ToastLevel::Error,
+            6,
+        ),
+    }
 }
 
 /// Spawn the conductor agent for a run with a scoped token and the rendered prompt.

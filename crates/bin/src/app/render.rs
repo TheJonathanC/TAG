@@ -174,6 +174,17 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     if let Some(ref rename_state) = state.rename_prompt {
         render_rename_modal(frame, size, rename_state, &state.theme);
     }
+    if let Some(ref goal) = state.goal_prompt {
+        tag_ui::render_prompt_modal(
+            frame,
+            size,
+            " Orchestrate ",
+            " Goal for the conductor (project defaults apply):",
+            goal,
+            72,
+            &state.theme,
+        );
+    }
 
     render_toasts(frame, size, &state.toasts, &state.theme);
 }
@@ -188,5 +199,6 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.snippet_state.is_open
         || state.vault_state.is_open
         || state.rename_prompt.is_some()
+        || state.goal_prompt.is_some()
         || state.tab_tray.is_open
 }

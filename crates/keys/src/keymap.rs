@@ -112,6 +112,7 @@ impl Keymap {
         leader_bindings.insert('d', (Action::Detach, "Detach session"));
         leader_bindings.insert('z', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert('m', (Action::ToggleZoom, "Maximize / restore"));
+        leader_bindings.insert('o', (Action::Orchestrate, "Orchestrate (start a run)"));
         leader_bindings.insert(',', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('R', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('Z', (Action::UndoLayout, "Undo layout"));

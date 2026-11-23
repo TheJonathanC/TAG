@@ -66,6 +66,29 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         cmd: crate::brain_cli::BrainCommands,
     },
+    /// Start an orchestration run in the running TAG (`tag orchestrate "<goal>"`)
+    Orchestrate {
+        /// What the run should achieve
+        goal: String,
+        /// Conductor profile
+        #[arg(long)]
+        conductor: Option<String>,
+        /// Worker profiles, comma-separated
+        #[arg(long, value_delimiter = ',')]
+        workers: Option<Vec<String>>,
+        /// Merge policy: ask or auto
+        #[arg(long)]
+        merge: Option<String>,
+        /// Budget in USD (0 = unlimited)
+        #[arg(long)]
+        budget: Option<f64>,
+        /// Skip plan approval
+        #[arg(long)]
+        yes: bool,
+        /// Print the raw JSON result
+        #[arg(long)]
+        json: bool,
+    },
     /// Talk to the running TAG's control plane (spawn, read, wait, merge, ...)
     Ctl {
         /// Print raw JSON results

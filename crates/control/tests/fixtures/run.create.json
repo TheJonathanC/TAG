@@ -6,6 +6,7 @@
     "goal": "Add OAuth login",
     "merge_policy": "auto",
     "project": null,
+    "require_plan_approval": null,
     "spawn_conductor": false,
     "worker_profiles": null
   },

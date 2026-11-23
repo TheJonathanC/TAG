@@ -15,7 +15,7 @@ pub use palette::{
     get_matched_commands, get_selected_command, hit_test_palette, render_command_palette,
     PaletteClick, PaletteState,
 };
-pub use rename_modal::{render_rename_modal, RenameModalState};
+pub use rename_modal::{render_prompt_modal, render_rename_modal, RenameModalState};
 pub use status_bar::{
     hit_test_status_bar, render_status_bar, StatusBarClickTarget, StatusBarProps,
 };

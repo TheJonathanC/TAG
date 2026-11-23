@@ -122,6 +122,15 @@ impl CommandRegistry {
                 action: Action::CloseActiveWorkspace,
             },
             Command {
+                id: "run.orchestrate".into(),
+                name: "Orchestrate: Start a Run".into(),
+                category: CommandCategory::Layout,
+                description: "Give a goal; a conductor agent plans it and runs worker agents"
+                    .into(),
+                default_shortcut: Some("^Space+o".into()),
+                action: Action::Orchestrate,
+            },
+            Command {
                 id: "pane.rename".into(),
                 name: "Rename Pane".into(),
                 category: CommandCategory::Layout,

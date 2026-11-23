@@ -57,3 +57,9 @@ Default leader key: `Ctrl+Space` (mnemonic, non-conflicting).
 | `Leader+e` | Secrets Vault | Encrypted storage, interactive secret management ([a] Add, [d] Delete), and agent env injection |
 | `Leader+n` | Do Not Disturb | Mute desktop notifications |
 | `Leader+q` | Quit | Clean shutdown and terminal state restore |
+
+## Orchestration
+
+| Shortcut | Action | Description |
+| --- | --- | --- |
+| `Leader+o` | Orchestrate | Prompt for a goal and start a run: a conductor agent plans it and TAG runs the worker agents (approve the plan from the attention queue, `Leader+a`) |

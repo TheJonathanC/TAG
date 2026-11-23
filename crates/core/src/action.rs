@@ -37,6 +37,8 @@ pub enum Action {
     RestorePane(PaneId),
     ToggleZoom,
     RenamePane(Option<PaneId>),
+    /// Prompt for a goal and start an orchestration run.
+    Orchestrate,
     Resize(Direction, u16),
     NewWorkspace,
     CloseWorkspace(WorkspaceId),

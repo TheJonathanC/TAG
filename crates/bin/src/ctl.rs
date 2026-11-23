@@ -15,6 +15,26 @@ const EXIT_NOT_RUNNING: i32 = 3;
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum CtlCommands {
+    /// Start an orchestration run: a conductor agent plans the goal and runs workers
+    Orchestrate {
+        /// What the run should achieve
+        goal: String,
+        /// Conductor profile (default: project's default_conductor, else claude)
+        #[arg(long)]
+        conductor: Option<String>,
+        /// Worker profiles, comma-separated
+        #[arg(long, value_delimiter = ',')]
+        workers: Option<Vec<String>>,
+        /// Merge policy: ask or auto
+        #[arg(long)]
+        merge: Option<String>,
+        /// Budget in USD (0 = unlimited)
+        #[arg(long)]
+        budget: Option<f64>,
+        /// Skip plan approval
+        #[arg(long)]
+        yes: bool,
+    },
     /// Raw JSON-RPC call: `tag ctl call <method> [json|-]`
     Call {
         method: String,
@@ -207,6 +227,47 @@ fn emit(json: bool, v: &Value, human: impl FnOnce(&Value) -> String) {
 fn run_inner(cmd: CtlCommands, json: bool, socket: Option<PathBuf>) -> Result<i32, ClientError> {
     let mut c = connect(socket)?;
     match cmd {
+        CtlCommands::Orchestrate {
+            goal,
+            conductor,
+            workers,
+            merge,
+            budget,
+            yes,
+        } => {
+            let mut params = json!({
+                "goal": goal,
+                "conductor_profile": conductor,
+                "worker_profiles": workers,
+                "budget": budget,
+                "spawn_conductor": true,
+            });
+            if let Some(m) = merge {
+                params["merge_policy"] = json!(m);
+            }
+            if yes {
+                params["require_plan_approval"] = json!(false);
+            }
+            let v = c.call_raw("run.create", params)?;
+            emit(json, &v, |v| {
+                let run = &v["run"];
+                format!(
+                    "Started run {} (conductor pane {}, merge policy {}).\n{}Follow it with `tag ctl run {}`.\n",
+                    s(run, "id"),
+                    run["conductor"]["pane"],
+                    s(run, "merge_policy"),
+                    if run["require_plan_approval"] == true {
+                        format!(
+                            "The plan needs your approval: `tag ctl call run.approve_plan '{{\"run\":\"{}\"}}'` (or the attention queue, ^Space a).\n",
+                            s(run, "id")
+                        )
+                    } else {
+                        String::new()
+                    },
+                    s(run, "id")
+                )
+            });
+        }
         CtlCommands::Call { method, params: p } => {
             let raw = match p.as_deref() {
                 None => "{}".to_string(),

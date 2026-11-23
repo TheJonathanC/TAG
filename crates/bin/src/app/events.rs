@@ -165,6 +165,27 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
         }
         AppEvent::TerminalInput(CrossEvent::Key(key)) => {
             state.is_dirty = true;
+            if let Some(ref mut goal) = state.goal_prompt {
+                match key.code {
+                    KeyCode::Enter => {
+                        let goal = goal.trim().to_string();
+                        state.goal_prompt = None;
+                        if !goal.is_empty() {
+                            start_run_from_ui(state, goal);
+                        }
+                    }
+                    KeyCode::Esc => state.goal_prompt = None,
+                    KeyCode::Backspace => {
+                        goal.pop();
+                    }
+                    _ => {
+                        if let Some(c) = text_input_char(&key) {
+                            goal.push(c);
+                        }
+                    }
+                }
+                return false;
+            }
             // Check rename modal prompt first
             if let Some(ref mut rename) = state.rename_prompt {
                 match key.code {

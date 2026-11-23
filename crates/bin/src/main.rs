@@ -47,6 +47,27 @@ fn main() -> Result<(), anyhow::Error> {
         return runtime.block_on(run_daemon(paths));
     }
 
+    if let Some(Commands::Orchestrate {
+        goal,
+        conductor,
+        workers,
+        merge,
+        budget,
+        yes,
+        json,
+    }) = cli.command
+    {
+        let cmd = ctl::CtlCommands::Orchestrate {
+            goal,
+            conductor,
+            workers,
+            merge,
+            budget,
+            yes,
+        };
+        std::process::exit(ctl::run_ctl(cmd, json, None)?);
+    }
+
     if let Some(Commands::Ctl { json, socket, cmd }) = cli.command {
         std::process::exit(ctl::run_ctl(cmd, json, socket)?);
     }

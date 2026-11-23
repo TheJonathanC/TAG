@@ -186,3 +186,39 @@ fn ask_policy_queues_merges_for_the_human() {
     assert!(repo.join("t2.txt").exists());
     assert!(d.shutdown().success());
 }
+
+/// T2.6: `tag orchestrate` starts a run (here without plan approval) that completes.
+#[test]
+fn tag_orchestrate_cli_runs_to_completion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (repo, config) = setup(tmp.path());
+    let mut d = Daemon::start_in(Some(&config), Some(&repo), |_| {});
+    let out = tag_cmd(&d.home)
+        .env("TAG_CONTROL_SOCKET", d.control_socket())
+        .args([
+            "orchestrate",
+            "write two files",
+            "--conductor",
+            "fakec",
+            "--workers",
+            "fakew",
+            "--merge",
+            "auto",
+            "--yes",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let run = v["run"]["id"].as_str().unwrap().to_string();
+    assert_eq!(v["run"]["require_plan_approval"], false);
+    let mut c = d.client("ctl");
+    let done = wait_run(&mut c, &run, 45, |r| r["state"] == "done");
+    assert_eq!(task_states(&done), vec!["merged", "merged"]);
+    assert!(d.shutdown().success());
+}

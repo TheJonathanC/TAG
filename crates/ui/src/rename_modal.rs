@@ -28,7 +28,28 @@ pub fn render_rename_modal(
     state: &RenameModalState,
     theme: &Theme,
 ) {
-    let modal_width = 54.min(total_area.width.saturating_sub(4));
+    render_prompt_modal(
+        frame,
+        total_area,
+        " Rename Pane ",
+        " Enter new title:",
+        &state.input,
+        54,
+        theme,
+    );
+}
+
+/// A one-line text prompt in a centered modal (`title`, `label`, current `input`).
+pub fn render_prompt_modal(
+    frame: &mut Frame,
+    total_area: Rect,
+    title: &str,
+    label: &str,
+    input: &str,
+    width: u16,
+    theme: &Theme,
+) {
+    let modal_width = width.min(total_area.width.saturating_sub(4));
     let modal_height = 7.min(total_area.height.saturating_sub(2));
 
     let modal_x = total_area.x + (total_area.width.saturating_sub(modal_width)) / 2;
@@ -44,7 +65,7 @@ pub fn render_rename_modal(
     frame.render_widget(Clear, modal_area);
 
     let block = Block::default()
-        .title(" Rename Pane ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(theme.border_focused);
 
@@ -53,13 +74,16 @@ pub fn render_rename_modal(
 
     let lines = vec![
         Line::from(vec![Span::styled(
-            " Enter new title:",
+            label,
             theme.text.add_modifier(Modifier::DIM),
         )]),
         Line::from(vec![
             Span::styled(" > ", theme.accent),
             Span::styled(
-                format!("{}_", state.input),
+                format!(
+                    "{}_",
+                    tail_chars(input, modal_width.saturating_sub(8) as usize)
+                ),
                 theme.title_focused.add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -72,4 +96,15 @@ pub fn render_rename_modal(
 
     let p = Paragraph::new(lines);
     frame.render_widget(p, inner);
+}
+
+/// The last `n` characters of `s` (so long input scrolls left).
+fn tail_chars(s: &str, n: usize) -> &str {
+    let count = s.chars().count();
+    if count <= n {
+        return s;
+    }
+    let skip = count - n;
+    let idx = s.char_indices().nth(skip).map(|(i, _)| i).unwrap_or(0);
+    &s[idx..]
 }

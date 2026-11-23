@@ -143,6 +143,9 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
             save_session_to_disk(state);
             state.needs_clear = true;
         }
+        Action::Orchestrate => {
+            state.goal_prompt = Some(String::new());
+        }
         Action::RenamePane(target_pid) => {
             let pid = target_pid.or(state.layout_mgr.active_workspace().focused_pane);
             if let Some(pid) = pid {
