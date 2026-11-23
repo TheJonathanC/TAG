@@ -186,6 +186,10 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
         render_workers_table(frame, size, &rows, &mut state.workers, &state.theme);
     }
 
+    if state.project_switcher.is_open {
+        render_switcher_overlay(frame, size, state);
+    }
+
     if let Some(pk) = state.peek {
         if state.panes.contains_key(&pk.pane) {
             let title = state
@@ -262,6 +266,7 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.run_view.is_open
         || state.tab_tray.is_open
         || state.workers.is_open
+        || state.project_switcher.is_open
         || state.peek.is_some()
         || state.brain_state.is_open
 }

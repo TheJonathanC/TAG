@@ -16,6 +16,7 @@ use tracing::info;
 pub(crate) fn handle_app_event(state: &mut AppState, event: AppEvent) -> bool {
     let was_overlay_open = is_any_overlay_open(state);
     let should_quit = handle_app_event_inner(state, event);
+    track_location(state);
     state.publish_status_changes();
     let is_overlay_open = is_any_overlay_open(state);
     if was_overlay_open != is_overlay_open {
@@ -205,6 +206,10 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
                         }
                     }
                 }
+                return false;
+            }
+            if state.project_switcher.is_open {
+                handle_switcher_key(state, &key);
                 return false;
             }
             if handle_peek_key(state, &key) {
@@ -973,6 +978,9 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
         }
         AppEvent::TerminalInput(CrossEvent::Mouse(mouse)) => {
             state.is_dirty = true;
+            if state.project_switcher.is_open {
+                return false;
+            }
             if state.peek.is_some() || state.workers.is_open {
                 handle_overlay_mouse(state, &mouse);
                 return false;

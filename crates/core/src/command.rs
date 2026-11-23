@@ -140,6 +140,32 @@ impl CommandRegistry {
                 action: Action::ToggleWorkers,
             },
             Command {
+                id: "projects.switcher".into(),
+                name: "Project Switcher".into(),
+                category: CommandCategory::Layout,
+                description:
+                    "Fuzzy tree of projects, workspaces and panes with a live preview; open a folder as a project"
+                        .into(),
+                default_shortcut: Some("^Space+P".into()),
+                action: Action::ToggleProjectSwitcher,
+            },
+            Command {
+                id: "nav.last_workspace".into(),
+                name: "Last Workspace".into(),
+                category: CommandCategory::Layout,
+                description: "Jump back to the previously active workspace, across projects".into(),
+                default_shortcut: Some("^Space+`".into()),
+                action: Action::LastWorkspace,
+            },
+            Command {
+                id: "nav.next_attention".into(),
+                name: "Next Agent Needing Input".into(),
+                category: CommandCategory::Layout,
+                description: "Jump to the next agent awaiting input, across all projects".into(),
+                default_shortcut: Some("^Space+!".into()),
+                action: Action::NextAttention,
+            },
+            Command {
                 id: "workers.peek".into(),
                 name: "Peek Worker".into(),
                 category: CommandCategory::Layout,
