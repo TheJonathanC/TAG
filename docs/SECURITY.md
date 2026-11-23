@@ -24,3 +24,52 @@ TAG (Agent Cockpit) incorporates a secure local secrets vault and environment va
 - Keep an idle auto-lock timeout configured in `config.toml`.
 - Store only the credentials required for the active workspace.
 - Review agent permissions carefully before granting command-execution privileges.
+
+## Control Plane and Orchestration
+
+TAG serves a local control socket (`tag-control-<pid>.sock`, see ADR 0005) used by `tag ctl`,
+`tag mcp` and the agents TAG launches for orchestration runs.
+
+### What it protects
+- **Other users.** The socket is mode `0600` in a `0700` per-user directory, and every connection's
+  peer UID is checked against the socket owner.
+- **Vault secrets.** `pane.spawn` can name vault secrets to inject into a child's environment, but no
+  control method returns secret values. A locked vault refuses injection (`PolicyBlocked`).
+- **Confused or prompt-injected agents using TAG's tools.** Every method has a tier (`read`, `act`,
+  `dangerous`). External assistants default to `read` (or `read`+`act` for `mcp`/`claude-desktop`);
+  merges, kills, plan approval and run cancellation are `dangerous`. Agents launched for a run carry
+  a scoped `TAG_CONTROL_TOKEN`:
+  - a **worker** token can only read its own pane, test/diff its own worktree, search the brain,
+    write notes and report on its own task. It cannot spawn agents, send input to other panes,
+    merge or approve;
+  - a **conductor** token can only manage its own run, cannot approve its own plan when approval is
+    required, and can merge only under `merge_policy = "auto"` and only when the diff avoids
+    `protected_paths`. Otherwise the merge waits for the human in the attention queue.
+- **Untested merges.** `worktree.merge` requires the last `tests.run` in that worktree to have
+  passed at the branch HEAD with a clean tree (unless the caller explicitly passes
+  `require_tests: false`, which needs the `dangerous` tier). Conflicts abort the merge and leave the
+  main worktree clean.
+- **Accountability.** Every `act`/`dangerous` call is appended to
+  `<state>/control-audit.jsonl` (time, client, role, run/task, method, params with prompts and
+  pasted text truncated to 200 characters).
+
+### What it does NOT protect against
+- **Same-UID code that wants to bypass it.** Tiers and tokens are a guardrail, not a sandbox. Any
+  process running as your user can connect to the socket without a token (as e.g. `ctl`, which has
+  all tiers by default), read your files, or run `git merge` itself. Agents run with your
+  permissions; prompt injection that makes an agent run arbitrary shell commands is out of scope for
+  the control plane. Use the agents' own permission modes and sandboxes for that.
+- **Prompt injection between agents.** A worker reads untrusted repository content and its output is
+  shown to the conductor. TAG limits what a worker token can *do*, and the conductor reviews diffs
+  and test results, but a conductor model can still be persuaded by text it reads. Keep
+  `merge_policy = "ask"` (the default) and `require_plan_approval = true` for anything important.
+- **Cost.** Budgets (`budget_usd`, `hard_budget`) are enforced only for usage TAG can attribute to a
+  run (profiles where TAG chooses the session id, currently Claude Code). Other agents' spend is
+  not counted toward a run's budget.
+
+### Recommended settings
+- Give external assistants `["read", "act"]` at most; keep `dangerous` with the human (`tag ctl` or
+  the UI).
+- Use `protected_paths` in `.tag/project.toml` for CI config, release scripts and agent instruction
+  files (e.g. `[".github/", "AGENTS.md", "CLAUDE.md"]`).
+- Review `control-audit.jsonl` after unattended runs.
