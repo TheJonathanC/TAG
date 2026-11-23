@@ -45,3 +45,4 @@ Plan: `docs/orchestration-roadmap.md`. Based on `origin/main` (`6403cc2`).
 | T5.5 agent-file sync | done | a3b9272 | `tag brain sync-agent-files [--create]` → CLAUDE.md, AGENTS.md, GEMINI.md (**[verify]** agy's instructions file name; GEMINI.md is the Gemini CLI convention) |
 | T5.6 brain graph + overlay | done | b5869e9 | `tag brain graph` (offline HTML), `Leader+B` overlay; Enter on a result moves to its links |
 | T5.7 post-run notes | done | 7c9d6ad | `.tag/brain/notes/run-<id>.md` + "Recent runs" block in brief.md on done/cancel |
+| T4.6 run auto-layout | done | 58ec43a | `run:<goal>` workspace created and focused when the conductor spawns; >3 tiled workers overflow to the run workspace's cards; the arrangement is rebuilt on each placement (user tweaks there get reset) |
