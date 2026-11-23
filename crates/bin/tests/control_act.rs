@@ -172,3 +172,52 @@ fn visibility_changes_keep_the_process() {
     assert!(ws[0]["panes"].as_array().unwrap().contains(&json!(pane)));
     assert!(d.shutdown().success());
 }
+
+/// T2.2: a pane hidden by the user survives a daemon restart, still hidden.
+#[test]
+fn hidden_pane_survives_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut d = Daemon::start_in(None, Some(tmp.path()), |_| {});
+    let st = d.state_dir.clone();
+    let mut c = d.client("ctl");
+    c.call_raw(
+        "pane.spawn",
+        json!({"profile": "shell", "visibility": "hidden", "title": "bg"}),
+    )
+    .unwrap();
+    c.call_raw(
+        "pane.spawn",
+        json!({"profile": "shell", "visibility": "pane"}),
+    )
+    .unwrap();
+    assert!(d.shutdown().success());
+    drop(c);
+    // Restart on the same state dir.
+    let mut d2 = Daemon::start_in(None, Some(tmp.path()), |dir| {
+        copy_dir(&st, dir);
+    });
+    let mut c = d2.client("ctl");
+    let panes = c.call_raw("panes.list", json!({})).unwrap();
+    let vis: Vec<_> = panes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["visibility"].as_str().unwrap().to_string())
+        .collect();
+    assert!(vis.contains(&"hidden".to_string()), "{panes}");
+    assert!(vis.contains(&"pane".to_string()), "{panes}");
+    assert!(d2.shutdown().success());
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let p = e.path();
+        let dest = to.join(e.file_name());
+        if p.is_dir() {
+            copy_dir(&p, &dest);
+        } else {
+            std::fs::copy(&p, &dest).unwrap();
+        }
+    }
+}

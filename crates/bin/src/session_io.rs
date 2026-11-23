@@ -144,7 +144,18 @@ pub(crate) fn save_session_to_disk(state: &AppState) {
         .active_project_id
         .clone()
         .unwrap_or_else(|| tag_projects::project_id(&dirs_or_home()));
-    let saved = build_project_session(state, &state.layout_mgr);
+    let mut saved = build_project_session(state, &state.layout_mgr);
+    // Hidden panes live in no layout; keep the ones the user hid (run workers are run-managed).
+    for (&pid, pane) in &state.panes {
+        let hidden_by_user = state.pane_meta.get(&pid).is_some_and(|m| {
+            m.run.is_none() && m.visibility == Some(tag_orchestrator::Visibility::Hidden)
+        });
+        if hidden_by_user && !saved.panes.contains_key(&pid) {
+            saved
+                .panes
+                .insert(pid, saved_pane(state, pid, pane.as_ref()));
+        }
+    }
     let _ = saved.save_to_file(&project_session_path(state_dir, &active_id));
     for (id, parked) in &state.parked {
         let saved = build_project_session(state, &parked.layout);

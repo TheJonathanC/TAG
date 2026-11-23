@@ -384,12 +384,17 @@ pub(crate) fn restore_project_session(
         }
     }
     let mut spawned: std::collections::HashSet<PaneId> = std::collections::HashSet::new();
+    let mut hidden: std::collections::HashSet<PaneId> = std::collections::HashSet::new();
     let mut entries: Vec<_> = saved.panes.into_iter().collect();
     entries.sort_by_key(|(pid, _)| pid.0);
     for (old, sp) in entries {
         let pid = remap.get(&old).copied().unwrap_or(old);
+        let is_hidden = sp.visibility.as_deref() == Some("hidden");
         if spawn_saved_pane(state, pid, sp, width, height) {
             spawned.insert(pid);
+            if is_hidden {
+                hidden.insert(pid);
+            }
         }
     }
     if spawned.is_empty() {
@@ -409,6 +414,15 @@ pub(crate) fn restore_project_session(
         .flat_map(|w| w.all_panes().into_iter().chain(w.minimized_panes.clone()))
         .collect();
     for pid in spawned.difference(&placed) {
+        if hidden.contains(pid) {
+            // Restored hidden: running, in no layout, sized like other hidden panes (§5.4).
+            state.pane_meta.entry(*pid).or_default().visibility =
+                Some(tag_orchestrator::Visibility::Hidden);
+            if let Some(pane) = state.panes.get_mut(pid) {
+                pane.on_resize(HIDDEN_COLS, HIDDEN_ROWS);
+            }
+            continue;
+        }
         if let Some(mut pane) = state.panes.remove(pid) {
             pane.kill();
         }
