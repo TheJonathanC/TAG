@@ -8,6 +8,7 @@
 mod doc;
 mod error;
 mod index;
+mod pin;
 
 pub use doc::{
     extract_links, parse_doc, project_id, render_doc, slugify, write_doc, Doc, DocKind,
@@ -15,6 +16,7 @@ pub use doc::{
 };
 pub use error::{Error, Result};
 pub use index::{Brain, BrainRoot, DocMeta, ReindexStats, SearchHit};
+pub use pin::{find_doc_file, pin_pattern, remove_doc};
 
 #[cfg(test)]
 mod tests;

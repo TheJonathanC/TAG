@@ -49,6 +49,11 @@ pub(crate) enum Commands {
         #[arg(long)]
         beta: bool,
     },
+    /// Pin patterns and search the project/global brain
+    Brain {
+        #[command(subcommand)]
+        cmd: crate::brain_cli::BrainCommands,
+    },
     /// Manage encrypted secrets in the TAG vault
     Vault {
         #[command(subcommand)]

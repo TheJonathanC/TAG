@@ -15,6 +15,7 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 mod app;
+mod brain_cli;
 mod cli;
 mod session_io;
 mod sockets;
@@ -25,6 +26,10 @@ use crate::{app::*, cli::*, session_io::*, sockets::*, tmux::*};
 
 fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
+
+    if let Some(Commands::Brain { cmd }) = cli.command {
+        return brain_cli::handle_brain_command(cmd);
+    }
 
     if let Some(Commands::SetupHooks { agent }) = cli.command {
         let info = get_setup_hooks(&agent);

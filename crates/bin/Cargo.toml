@@ -32,6 +32,7 @@ tag-ui = { path = "../ui", version = "0.1.0" }
 tag-git = { path = "../git", version = "0.1.0" }
 tag-clipboard = { path = "../clipboard", version = "0.1.0" }
 tag-vault = { path = "../vault", version = "0.1.0" }
+tag-brain = { path = "../brain", version = "0.1.0" }
 tag-agents = { path = "../agents", version = "0.1.0" }
 tag-notify = { path = "../notify", version = "0.1.0" }
 tag-usage = { path = "../usage", version = "0.1.0" }
