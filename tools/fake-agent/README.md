@@ -19,7 +19,7 @@ prints `PROMPT: <prompt>` first.
 | `commit <msg>` | `git add -A && git commit -m <msg>` in cwd; failure exits 4 |
 | `bel` | write BEL (`\x07`) |
 | `osc9 <text>` | write `ESC ] 9 ; <text> BEL` |
-| `notify <event>` | run `$FAKE_AGENT_NOTIFY_BIN` (default `cockpit-notify`) `--event <event>`; prints `NOTIFY_FAILED` on error |
+| `notify <event>` | run `$FAKE_AGENT_NOTIFY_BIN` (default `cockpit-notify`) `<event>` (e.g. `notify TaskDone`); prints `NOTIFY_FAILED` on error |
 | `ctl <method> <json>` | run `$FAKE_AGENT_TAG_BIN` (default `tag`) `ctl call <method> <json>`; stdout lines printed as `CTL: ...`; failure prints `CTL_ERROR: <stderr>` |
 | `ctl_save <var> <method> <json>` | like `ctl`, storing trimmed stdout in `<var>`; if `<var>` is `name.a.b`, stdout is parsed as JSON and `result["a"]["b"]` is stored as `name` |
 | `sleep <ms>` | sleep |

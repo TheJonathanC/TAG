@@ -33,6 +33,7 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
         }
         AppEvent::PtyOutput { pane_id, data } => {
             state.is_dirty = true;
+            state.last_output.insert(pane_id, std::time::Instant::now());
             if let Some(pane) = state.panes.get_mut(&pane_id) {
                 let _ = pane.handle_event(&AppEvent::PtyOutput { pane_id, data });
             }
@@ -50,6 +51,9 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             }
             state.panes.remove(&pane_id);
             state.last_status.remove(&pane_id);
+            state.pane_meta.remove(&pane_id);
+            state.pending_prompts.remove(&pane_id);
+            state.last_output.remove(&pane_id);
             state.publish(StateEvent::PaneExited {
                 pane: pane_id,
                 exit_code,
@@ -1235,6 +1239,7 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             false
         }
         AppEvent::Tick => {
+            deliver_pending_prompts(state);
             let now = chrono::Utc::now();
             let before = state.toasts.len();
             state.toasts.retain(|t| {

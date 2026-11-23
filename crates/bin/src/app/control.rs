@@ -33,6 +33,9 @@ pub(crate) fn handle_control(state: &mut AppState, env: ControlEnvelope) {
         params,
         reply,
     } = env;
+    if handle_act(state, &client, &method, params.clone(), reply.clone()).is_some() {
+        return;
+    }
     let result = match method.as_str() {
         "projects.list" => respond(projects_list(state)),
         "workspaces.list" => respond(workspaces_list(state)),

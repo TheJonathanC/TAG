@@ -49,6 +49,15 @@ impl Daemon {
 
     /// Start a daemon after letting `prepare` populate the state dir (e.g. a session).
     pub fn start_with(config: Option<&str>, prepare: impl FnOnce(&Path)) -> Daemon {
+        Self::start_in(config, None, prepare)
+    }
+
+    /// Like [`Daemon::start_with`], running the daemon with `cwd` as its working directory.
+    pub fn start_in(
+        config: Option<&str>,
+        cwd: Option<&Path>,
+        prepare: impl FnOnce(&Path),
+    ) -> Daemon {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let socket_dir = dir.path().join("s");
@@ -58,7 +67,11 @@ impl Daemon {
         prepare(&state_dir);
         let config_path = dir.path().join("config.toml");
         std::fs::write(&config_path, config.unwrap_or("")).unwrap();
-        let child = tag_cmd(&home)
+        let mut cmd = tag_cmd(&home);
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
+        let child = cmd
             .arg("daemon")
             .arg("--socket-dir")
             .arg(&socket_dir)
@@ -175,4 +188,91 @@ pub fn eventually<T>(secs: u64, mut f: impl FnMut() -> Option<T>) -> T {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Path to the `fake-agent` binary, building it on first use.
+pub fn fake_agent_bin() -> PathBuf {
+    static BIN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| {
+        // tests run from target/<profile>/deps/<test-bin>
+        let exe = std::env::current_exe().unwrap();
+        let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
+        let target_dir = profile_dir.parent().unwrap().to_path_buf();
+        let bin = profile_dir.join("fake-agent");
+        let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .args(["build", "-q", "-p", "fake-agent", "--target-dir"])
+            .arg(&target_dir)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "building fake-agent failed");
+        assert!(bin.exists(), "{} missing", bin.display());
+        bin
+    })
+    .clone()
+}
+
+/// Path to the `cockpit-notify` binary built alongside `tag`.
+pub fn notify_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_cockpit-notify"))
+}
+
+/// Create a git repo with one commit at `dir`.
+pub fn init_repo(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            ok.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.join("README.md"), "test repo\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "init"]);
+}
+
+/// `git rev-parse HEAD` in `dir`.
+pub fn head(dir: &Path) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A `config.toml` with a `fake` agent profile running `script` (prompt passed as an arg).
+pub fn fake_agent_config(script: &Path) -> String {
+    format!(
+        r#"
+[agents.fake]
+name = "fake"
+command = "{bin}"
+args = ["--script", "{script}"]
+prompt_delivery = "arg"
+prompt_args = ["{{prompt}}"]
+done_signal = ["hook"]
+
+[agents.fake.env]
+FAKE_AGENT_NOTIFY_BIN = "{notify}"
+"#,
+        bin = fake_agent_bin().display(),
+        script = script.display(),
+        notify = notify_bin().display(),
+    )
 }

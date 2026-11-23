@@ -181,7 +181,7 @@ pub fn run<R: BufRead, W: Write>(
             }
             "notify" => {
                 let ok = Command::new(&cfg.notify_bin)
-                    .args(["--event", &rest])
+                    .arg(&rest)
                     .current_dir(&cfg.cwd)
                     .status()
                     .map(|s| s.success())
@@ -371,7 +371,7 @@ mod tests {
         go("notify agent-done", None, "", &c2);
         assert_eq!(
             std::fs::read_to_string(marker).unwrap().trim(),
-            "--event agent-done"
+            "agent-done"
         );
     }
 
