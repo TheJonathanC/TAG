@@ -614,3 +614,5 @@ tag brain search "refresh token" [--kind K] [--limit N]
 tag brain rm pat_jwt-middleware                    # delete the file
 tag brain sync-agent-files [--create]              # write a managed brain block (brief summary, decisions, patterns, search hint) into CLAUDE.md, AGENTS.md and GEMINI.md; only text between the tag:brain markers is touched, missing files are created only with --create
 ```
+
+**Post-run notes.** When an orchestrated run finishes (`done` or `cancelled`) and no brain note mentions it, TAG writes `.tag/brain/notes/run-<id>.md` (goal, tasks with final state and report summaries, outcome, merged commits) and refreshes a managed "Recent runs" block (last 10, `[[note_run-<id>]]` links) between `<!-- tag:runs:start -->` and `<!-- tag:runs:end -->` in `brief.md`. Text outside the markers is never touched.

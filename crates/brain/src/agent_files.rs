@@ -119,15 +119,21 @@ pub fn render_agent_block(repo_root: &Path) -> String {
 /// Pure text transform: put `block` (LF endings) into `existing`, preserving
 /// every byte outside the markers. Returns the new text and the outcome.
 pub fn apply_block(existing: &str, block: &str) -> (String, SyncOutcome) {
+    apply_marked(existing, BLOCK_START, BLOCK_END, block)
+}
+
+/// Like [`apply_block`] with caller-supplied markers. `block` must include
+/// the markers themselves.
+pub fn apply_marked(existing: &str, start: &str, end: &str, block: &str) -> (String, SyncOutcome) {
     let crlf = existing.contains("\r\n");
     let block_eol = if crlf {
         block.replace('\n', "\r\n")
     } else {
         block.to_string()
     };
-    if let Some(s) = existing.find(BLOCK_START) {
-        if let Some(rel) = existing[s..].find(BLOCK_END) {
-            let e = s + rel + BLOCK_END.len();
+    if let Some(s) = existing.find(start) {
+        if let Some(rel) = existing[s..].find(end) {
+            let e = s + rel + end.len();
             let new = format!("{}{}{}", &existing[..s], block_eol, &existing[e..]);
             let outcome = if new == existing {
                 SyncOutcome::Unchanged
