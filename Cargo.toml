@@ -14,6 +14,7 @@ members = [
     "crates/usage",
     "crates/brain",
     "crates/applets",
+    "crates/orchestrator",
     "crates/bin",
     "tools/fake-agent",
 ]
