@@ -122,6 +122,67 @@ impl CommandRegistry {
                 action: Action::CloseActiveWorkspace,
             },
             Command {
+                id: "run.orchestrate".into(),
+                name: "Orchestrate: Start a Run".into(),
+                category: CommandCategory::Layout,
+                description: "Give a goal; a conductor agent plans it and runs worker agents"
+                    .into(),
+                default_shortcut: Some("^Space+o".into()),
+                action: Action::Orchestrate,
+            },
+            Command {
+                id: "workers.table".into(),
+                name: "Workers Table".into(),
+                category: CommandCategory::Layout,
+                description: "k9s-style table of all agent workers: open, peek, hide, kill, reply"
+                    .into(),
+                default_shortcut: Some("^Space+A".into()),
+                action: Action::ToggleWorkers,
+            },
+            Command {
+                id: "projects.switcher".into(),
+                name: "Project Switcher".into(),
+                category: CommandCategory::Layout,
+                description:
+                    "Fuzzy tree of projects, workspaces and panes with a live preview; open a folder as a project"
+                        .into(),
+                default_shortcut: Some("^Space+P".into()),
+                action: Action::ToggleProjectSwitcher,
+            },
+            Command {
+                id: "nav.last_workspace".into(),
+                name: "Last Workspace".into(),
+                category: CommandCategory::Layout,
+                description: "Jump back to the previously active workspace, across projects".into(),
+                default_shortcut: Some("^Space+`".into()),
+                action: Action::LastWorkspace,
+            },
+            Command {
+                id: "nav.next_attention".into(),
+                name: "Next Agent Needing Input".into(),
+                category: CommandCategory::Layout,
+                description: "Jump to the next agent awaiting input, across all projects".into(),
+                default_shortcut: Some("^Space+!".into()),
+                action: Action::NextAttention,
+            },
+            Command {
+                id: "workers.peek".into(),
+                name: "Peek Worker".into(),
+                category: CommandCategory::Layout,
+                description: "Floating live view of a card, or the next agent needing input".into(),
+                default_shortcut: Some("^Space+f".into()),
+                action: Action::Peek,
+            },
+            Command {
+                id: "run.view".into(),
+                name: "Orchestrate: Run View".into(),
+                category: CommandCategory::Layout,
+                description: "Tasks of the active run, live worker output, diff stats and tests"
+                    .into(),
+                default_shortcut: Some("^Space+O".into()),
+                action: Action::ToggleRunView,
+            },
+            Command {
                 id: "pane.rename".into(),
                 name: "Rename Pane".into(),
                 category: CommandCategory::Layout,
@@ -224,6 +285,15 @@ impl CommandRegistry {
                 description: "Manage worktrees, inspect status, view diffs".into(),
                 default_shortcut: Some("^Space+g".into()),
                 action: Action::ToggleGitOverlay,
+            },
+            Command {
+                id: "tools.brain".into(),
+                name: "Brain Browser".into(),
+                category: CommandCategory::Tools,
+                description: "Search the project brain, preview docs, follow links and backlinks"
+                    .into(),
+                default_shortcut: Some("^Space+B".into()),
+                action: Action::ToggleBrainOverlay,
             },
             Command {
                 id: "tools.snippets".into(),

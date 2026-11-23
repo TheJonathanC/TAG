@@ -112,6 +112,10 @@ impl Keymap {
         leader_bindings.insert('d', (Action::Detach, "Detach session"));
         leader_bindings.insert('z', (Action::ToggleZoom, "Maximize / restore"));
         leader_bindings.insert('m', (Action::ToggleZoom, "Maximize / restore"));
+        leader_bindings.insert('o', (Action::Orchestrate, "Orchestrate (start a run)"));
+        leader_bindings.insert('O', (Action::ToggleRunView, "Run view"));
+        leader_bindings.insert('A', (Action::ToggleWorkers, "Workers table"));
+        leader_bindings.insert('f', (Action::Peek, "Peek worker"));
         leader_bindings.insert(',', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('R', (Action::RenamePane(None), "Rename pane"));
         leader_bindings.insert('Z', (Action::UndoLayout, "Undo layout"));
@@ -123,6 +127,7 @@ impl Keymap {
         leader_bindings.insert('w', (Action::NewWorkspace, "New workspace"));
         leader_bindings.insert('W', (Action::CloseActiveWorkspace, "Close workspace"));
         leader_bindings.insert('b', (Action::ToggleTabTray, "Tab tray"));
+        leader_bindings.insert('B', (Action::ToggleBrainOverlay, "Brain browser"));
         leader_bindings.insert(' ', (Action::ToggleQuickSwitcher, "Quick switcher"));
         leader_bindings.insert('a', (Action::ToggleAttentionQueue, "Attention queue"));
         leader_bindings.insert('u', (Action::ToggleUsageOverlay, "Usage & tokens"));
@@ -132,7 +137,9 @@ impl Keymap {
         leader_bindings.insert('v', (Action::PasteFromClipboard, "Paste clipboard"));
         leader_bindings.insert('V', (Action::PasteFromClipboard, "Paste clipboard"));
         leader_bindings.insert('p', (Action::PasteFromClipboard, "Paste clipboard"));
-        leader_bindings.insert('P', (Action::PasteFromClipboard, "Paste clipboard"));
+        leader_bindings.insert('P', (Action::ToggleProjectSwitcher, "Project switcher"));
+        leader_bindings.insert('`', (Action::LastWorkspace, "Last workspace"));
+        leader_bindings.insert('!', (Action::NextAttention, "Next agent needing input"));
         leader_bindings.insert('e', (Action::ToggleVaultOverlay, "Vault (Secrets & Env)"));
         leader_bindings.insert('E', (Action::ToggleVaultOverlay, "Vault (Secrets & Env)"));
         leader_bindings.insert('n', (Action::ToggleDnd, "Do Not Disturb"));

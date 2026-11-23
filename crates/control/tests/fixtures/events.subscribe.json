@@ -1,0 +1,13 @@
+{
+  "method": "events.subscribe",
+  "params": {
+    "kinds": [
+      "pane_status_changed"
+    ],
+    "pane": null,
+    "run": null
+  },
+  "result": {
+    "subscribed": true
+  }
+}

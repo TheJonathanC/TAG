@@ -1,0 +1,14 @@
+{
+  "method": "agent.wait",
+  "params": {
+    "pane": 14,
+    "timeout_s": 30,
+    "until": [
+      "done"
+    ]
+  },
+  "result": {
+    "reason": "status",
+    "status": "done"
+  }
+}

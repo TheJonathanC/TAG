@@ -1,0 +1,23 @@
+{
+  "method": "brain.get",
+  "params": {
+    "id": "pat_jwt",
+    "kind": null,
+    "project": null
+  },
+  "result": {
+    "backlinks": [],
+    "body": "b",
+    "frontmatter": {
+      "tags": [
+        "auth"
+      ]
+    },
+    "id": "pat_jwt",
+    "kind": "pattern",
+    "links": [
+      "dec_x"
+    ],
+    "title": "JWT"
+  }
+}

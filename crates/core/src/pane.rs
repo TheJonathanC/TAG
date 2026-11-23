@@ -57,6 +57,8 @@ pub trait Pane: Send + Sync {
     fn is_active(&self) -> bool;
     fn send_input(&mut self, _data: &[u8]) {}
     fn kill(&mut self) {}
+    /// Called for every pane on each app tick; default is a no-op.
+    fn on_tick(&mut self) {}
 
     // Scrolling & selection
     fn scroll(&mut self, _delta: i32) {}
@@ -103,6 +105,14 @@ pub trait Pane: Send + Sync {
     }
     /// For built-in applets, the name used to recreate them (e.g. "chat", "poker")
     fn applet_name(&self) -> Option<&'static str> {
+        None
+    }
+    /// The last `lines` lines of output as plain text (control plane `pane.read`).
+    fn read_text(&mut self, _lines: usize) -> Option<String> {
+        None
+    }
+    /// Agent profile name for agent panes.
+    fn agent_profile(&self) -> Option<String> {
         None
     }
 }

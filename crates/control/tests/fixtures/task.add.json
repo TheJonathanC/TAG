@@ -1,0 +1,34 @@
+{
+  "method": "task.add",
+  "params": {
+    "acceptance": [
+      "cargo test passes"
+    ],
+    "depends_on": [],
+    "id": null,
+    "parallel_ok": false,
+    "profile": null,
+    "prompt": "do it",
+    "run": "r_1",
+    "title": "API routes"
+  },
+  "result": {
+    "acceptance": [
+      "cargo test passes"
+    ],
+    "attempts": 0,
+    "branch": null,
+    "depends_on": [],
+    "failure_reason": null,
+    "id": "t1",
+    "last_test": null,
+    "pane": null,
+    "parallel_ok": false,
+    "profile": null,
+    "prompt": "do it",
+    "report": null,
+    "state": "planned",
+    "title": "API routes",
+    "worktree": null
+  }
+}

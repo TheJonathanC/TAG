@@ -1,0 +1,32 @@
+{
+  "method": "task.update",
+  "params": {
+    "acceptance": null,
+    "profile": null,
+    "prompt": null,
+    "reason": null,
+    "run": "r_1",
+    "state": "approved",
+    "task": "t1",
+    "title": null
+  },
+  "result": {
+    "acceptance": [
+      "cargo test passes"
+    ],
+    "attempts": 0,
+    "branch": null,
+    "depends_on": [],
+    "failure_reason": null,
+    "id": "t1",
+    "last_test": null,
+    "pane": null,
+    "parallel_ok": false,
+    "profile": null,
+    "prompt": "do it",
+    "report": null,
+    "state": "planned",
+    "title": "API routes",
+    "worktree": null
+  }
+}

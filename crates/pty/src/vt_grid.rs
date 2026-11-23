@@ -193,6 +193,43 @@ impl VtGrid {
         lines
     }
 
+    /// The last `lines` lines of scrollback + screen as plain text (no ANSI; carriage-return
+    /// progress lines are already collapsed by the emulator). Trailing blank screen rows are
+    /// dropped. The user's scroll position is preserved.
+    ///
+    /// vt100 0.15 overflows when the scrollback offset exceeds the screen height, so at most
+    /// one screen-height of scrollback is returned on top of the screen itself.
+    pub fn text_tail(&mut self, lines: usize) -> String {
+        let saved = self.parser.screen().scrollback();
+        let (rows, cols) = self.parser.screen().size();
+        self.parser.set_scrollback(0);
+        let mut screen_lines: Vec<String> = self.parser.screen().rows(0, cols).collect();
+        while screen_lines.last().is_some_and(|l| l.trim().is_empty()) {
+            screen_lines.pop();
+        }
+        let mut out = Vec::new();
+        let want_extra = lines.saturating_sub(screen_lines.len());
+        if want_extra > 0 {
+            self.parser.set_scrollback(rows as usize);
+            let available = self.parser.screen().scrollback();
+            // With scrollback offset `o`, screen row 0 shows the line `o` lines above the top.
+            for o in (1..=want_extra.min(available)).rev() {
+                self.parser.set_scrollback(o);
+                if let Some(line) = self.parser.screen().rows(0, cols).next() {
+                    out.push(line);
+                }
+            }
+        }
+        out.extend(screen_lines);
+        self.parser.set_scrollback(saved);
+        let skip = out.len().saturating_sub(lines);
+        out.into_iter()
+            .skip(skip)
+            .map(|l| l.trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub fn get_row_text(&self, row: u16) -> String {
         let screen = self.parser.screen();
         let (_num_rows, cols) = screen.size();
@@ -247,5 +284,30 @@ fn convert_color(color: VtColor) -> Option<RatColor> {
         VtColor::Default => None,
         VtColor::Idx(i) => Some(RatColor::Indexed(i)),
         VtColor::Rgb(r, g, b) => Some(RatColor::Rgb(r, g, b)),
+    }
+}
+
+#[cfg(test)]
+mod text_tail_tests {
+    use super::*;
+
+    #[test]
+    fn text_tail_includes_scrollback_and_preserves_scroll() {
+        let mut g = VtGrid::new(20, 3, 100);
+        let mut ring = ScrollbackRing::new(100);
+        for i in 0..10 {
+            g.process(format!("line {i}\r\n").as_bytes(), &mut ring);
+        }
+        g.process(b"\x1b[31mdl\x1b[0m  50%\rdl 100%", &mut ring);
+        g.set_scrollback(2);
+        let t = g.text_tail(4);
+        assert_eq!(t, "line 7\nline 8\nline 9\ndl 100%");
+        assert_eq!(g.scrollback(), 2);
+        // Screen (3 rows, last one blank-trimmed) + at most 3 rows of scrollback.
+        assert!(
+            g.text_tail(100).starts_with("line 5\n"),
+            "{}",
+            g.text_tail(100)
+        );
     }
 }

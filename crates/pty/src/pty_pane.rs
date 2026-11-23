@@ -420,6 +420,10 @@ impl PtyPane {
 }
 
 impl Pane for PtyPane {
+    fn read_text(&mut self, lines: usize) -> Option<String> {
+        Some(self.vt.text_tail(lines))
+    }
+
     fn id(&self) -> PaneId {
         self.id
     }

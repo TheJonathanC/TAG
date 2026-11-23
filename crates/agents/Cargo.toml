@@ -18,3 +18,4 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 tracing = { workspace = true }
+regex = { workspace = true }

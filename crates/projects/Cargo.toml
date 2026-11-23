@@ -1,0 +1,18 @@
+[package]
+name = "tag-projects"
+version = "0.1.0"
+edition.workspace = true
+description = "Project registry and repo/worktree resolution for TAG"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

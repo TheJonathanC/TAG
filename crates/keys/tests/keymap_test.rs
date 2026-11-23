@@ -179,6 +179,17 @@ fn test_leader_in_passthrough_returns_to_passthrough() {
 }
 
 #[test]
+fn test_leader_shift_b_opens_brain_and_lowercase_b_stays_tab_tray() {
+    let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
+    sm.process_key(leader_event());
+    let big = KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT);
+    assert_eq!(sm.process_key(big), Some(Action::ToggleBrainOverlay));
+    sm.process_key(leader_event());
+    let small = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty());
+    assert_eq!(sm.process_key(small), Some(Action::ToggleTabTray));
+}
+
+#[test]
 fn test_workspace_number_keys_switch_by_position() {
     let mut sm = KeyStateMachine::new(Keymap::default_preset(), Duration::from_millis(400));
     let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);

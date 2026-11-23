@@ -1,0 +1,10 @@
+{
+  "method": "brain.import_pattern",
+  "params": {
+    "id": "pat_jwt",
+    "worktree": "r_ab12-t1"
+  },
+  "result": {
+    "path": "/src/tag/.worktrees/r_ab12-t1/.tag/ref/jwt"
+  }
+}

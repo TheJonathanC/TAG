@@ -1,0 +1,19 @@
+{
+  "method": "panes.list",
+  "params": {
+    "kind": "agent",
+    "project": null,
+    "workspace": null
+  },
+  "result": [
+    {
+      "cwd": "/src/tag",
+      "id": 3,
+      "kind": "agent",
+      "profile": "claude",
+      "status": "running",
+      "title": "claude",
+      "visibility": "pane"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "method": "pane.send",
+  "params": {
+    "pane": 14,
+    "submit": true,
+    "text": "yes"
+  },
+  "result": {}
+}

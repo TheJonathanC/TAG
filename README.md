@@ -363,6 +363,44 @@ Default leader key: `Ctrl+Space`
 
 ---
 
+## Connecting assistants (MCP)
+
+`tag mcp` runs a Model Context Protocol server over stdio. It exposes TAG's control methods (list panes, read agent output, spawn agents and worktrees, and so on) as tools named `tag_<method>`, for example `tag_panes_list` and `tag_pane_spawn`. TAG must be running (`tag` or `tag daemon`); the server connects lazily and retries on each call.
+
+**Claude desktop app** (`claude_desktop_config.json`):
+
+```json
+{"mcpServers": {"tag": {"command": "tag", "args": ["mcp", "--client", "claude-desktop"]}}}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add tag -- tag mcp --client claude-code
+```
+
+**agy:**
+
+```bash
+agy mcp add tag -- tag mcp --client agy
+```
+
+The `--client` name decides which tools are offered. Unknown client names get read-only access; `mcp` (the default) and `claude-desktop` get read and act tiers. Dangerous tools (merge, remove, kill) are only offered to clients granted the `dangerous` tier, and may still wait for human approval in TAG. To change a client's tiers, add this to `config.toml`:
+
+```toml
+[control.clients.claude-code]
+tiers = ["read", "act"]
+```
+
+---
+
+
+**Remote MCP over HTTP (optional, off by default).** Build with `cargo build --features mcp-http`,
+then `TAG_MCP_HTTP_TOKEN=<random 16+ chars> tag mcp --http 127.0.0.1:8765 --client claude-desktop`.
+It binds to loopback only, requires `Authorization: Bearer <token>` on every request, accepts
+`POST /mcp` (one JSON-RPC message per request), and applies the same tiers as stdio. Put it behind a
+tunnel you control; anyone with the token can act with that client's tiers.
+
 ## CLI reference and helper utilities
 
 ### `tag`
@@ -397,6 +435,69 @@ tag vault set OPENAI_API_KEY "sk-..." # Or provide inline / piped
 tag vault list                       # List all stored secret keys
 tag vault get ANTHROPIC_API_KEY      # Retrieve secret value
 tag vault remove ANTHROPIC_API_KEY   # Delete secret from vault
+
+# Run headless (no UI): serves the hook and control sockets for `tag ctl` / `tag mcp`.
+# Session is kept in the state dir (~/.local/state/tag), separate from the UI's session.
+tag daemon [--socket-dir DIR] [--state-dir DIR] [--config FILE]
+```
+
+The UI and the daemon both serve a **control socket** (`tag-control-<pid>.sock`, next to the hook
+socket, mode `0600`) speaking newline-delimited JSON-RPC 2.0. `tag ctl` and `tag mcp` are thin
+clients of it. Client permissions are configured in `config.toml`:
+
+```toml
+[control]
+enabled = true
+
+[control.clients.claude-desktop]
+tiers = ["read", "act"]          # "dangerous" (merge, kill, approve) stays with the human
+```
+
+Built-in defaults: `ctl` gets `read`/`act`/`dangerous`, `mcp` and `claude-desktop` get `read`/`act`,
+any other client name gets `read`. Act and dangerous calls are logged to
+`~/.local/state/tag/control-audit.jsonl`.
+
+### `tag orchestrate`
+Start an orchestration run in the running TAG (UI or `tag daemon`): a conductor agent plans the goal,
+TAG runs each task in its own worker agent and git worktree, and merges follow the merge policy.
+
+In the UI, `Ctrl+Space A` opens the workers table (open, peek, hide, kill, reply), `Ctrl+Space f` peeks
+a worker in a floating live view, and background workers show as clickable cards above the status bar.
+`Ctrl+Space P` opens the project switcher (fuzzy tree of projects, workspaces and panes with a live preview),
+``Ctrl+Space ` `` jumps back to the last workspace across projects, and `Ctrl+Space !` jumps to the next agent
+needing input in any project.
+
+```bash
+tag orchestrate "Add OAuth login" [--conductor claude] [--workers agy-neon,claude] \
+    [--merge ask|auto] [--budget 5] [--yes]   # --yes skips plan approval
+```
+
+Inside the UI, `Leader+o` does the same. Defaults come from `<repo>/.tag/project.toml`
+(`default_conductor`, `default_workers`, `merge_policy`, `require_plan_approval`, `max_workers`,
+`worker_visibility`, `budget_usd`, `protected_paths`, `test_command`). The conductor and worker
+prompts are Markdown templates in `~/.config/tag/prompts/` (installed on first run, never overwritten).
+Agents launched for a run get a scoped `TAG_CONTROL_TOKEN`: workers can only report on and test their
+own task; conductors can only manage their own run, and only merge when the run's policy is `auto`
+(otherwise the merge waits for you in the attention queue).
+
+### `tag ctl`
+Client for the running TAG's control plane (works from inside TAG panes). The socket comes from `--socket`, else `$TAG_CONTROL_SOCKET`, else discovery; `$TAG_CONTROL_TOKEN` supplies a scoped token. Add `--json` to any subcommand for the raw JSON result. Errors print `error: <message> (code <code>)` to stderr; exit code 1 on error, 2 on `wait` timeout, 3 when TAG is not running.
+
+```bash
+tag ctl call <method> [json|-]       # Raw JSON-RPC call (params default to {}, '-' reads stdin)
+tag ctl ls                           # Panes: id, kind, profile, status, visibility, title, cwd
+tag ctl read <pane> [--lines N] [--max-bytes N]
+tag ctl spawn <profile> [--worktree NAME] [--base REF] [--prompt TEXT | --prompt-file F] \
+    [--visibility hidden|card|pane] [--cwd DIR] [--title T] [--secret NAME]...   # Prints pane id
+tag ctl send <pane> <text> [--no-submit]
+tag ctl wait <pane> [--until done,awaiting_input,...] [--timeout SECS]   # Exit 0 matched, 2 timeout
+tag ctl diff <worktree> [--stat]
+tag ctl test <worktree> [--command CMD]       # Exit code is the test exit code
+tag ctl merge <worktree> [--no-require-tests]
+tag ctl status <pane>
+tag ctl runs                         # run.list
+tag ctl run <id>                     # run.get
+tag ctl subscribe [--kinds a,b]      # Stream events as JSON lines until killed
 ```
 
 ### `cockpit-notify` / `tag-notify`
@@ -466,6 +567,21 @@ name = "Antigravity"
 command = "agy"
 args = []
 status_patterns = ["(?i)allow", "(?i)proceed\\?"]
+
+# Optional orchestration keys (all have defaults; old configs keep working):
+[agents.agy-neon]
+command = "agy"
+model = "gemini-4-neon-high"          # appends `model_flag` (default --model) + model
+roles = ["conductor", "worker"]       # conductor | worker | reviewer
+prompt_delivery = "arg"               # type (default) | arg | stdin
+prompt_args = ["-i", "{prompt}"]      # {prompt} substituted when prompt_delivery = "arg"
+resume_args = ["--conversation", "{session_id}"]
+session_id_args = []                  # e.g. ["--session-id", "{session_id}"] to pick an id up front
+mcp_config_args = []                  # e.g. ["--mcp-config", "{mcp_config_path}"]
+done_signal = ["osc", "idle"]         # hook | osc | idle | regex | exit
+done_regex = "DONE"                   # used with done_signal = ["regex"]
+idle_done_secs = 45                   # 0 = disabled
+max_concurrent = 6                    # 0 = unlimited
 ```
 
 ---
@@ -528,3 +644,24 @@ Unit and integration tests verify:
 ## License
 
 MIT OR Apache-2.0
+
+## Brain
+
+TAG keeps a Markdown "brain": per-project notes in `<repo>/.tag/brain/` and global ones in `~/.config/tag/brain/`. Documents are `.md` files with YAML frontmatter and `[[wikilinks]]`; a SQLite FTS index in the state dir is rebuilt automatically.
+
+```bash
+tag brain init [--no-project-toml]                # bootstrap .tag/brain/brief.md (never overwrites; writes brief.generated.md if present) and .tag/project.toml
+tag brain pin src/auth.py src/deps.py --title "JWT middleware" --tags auth,jwt --desc "What it does..."  # add --global for the global brain
+tag brain ls [--kind pattern] [--global] [--all]   # list documents (project + global by default)
+tag brain show pat_jwt-middleware                  # document, links and backlinks
+tag brain search "refresh token" [--kind K] [--limit N]
+tag brain rm pat_jwt-middleware                    # delete the file
+tag brain sync-agent-files [--create]              # write a managed brain block (brief summary, decisions, patterns, search hint) into CLAUDE.md, AGENTS.md and GEMINI.md; only text between the tag:brain markers is touched, missing files are created only with --create
+tag brain graph [--project P|.] [-o graph.html]    # self-contained HTML link graph (no CDN): force-directed, colored by kind, clustered by project, click a node to read it
+```
+
+Agents can use the brain over the control socket (`tag ctl` or MCP): `brain.search`, `brain.get` (by id, or a project's brief), `brain.get_pattern` (pattern plus its source files at the pinned commit), `brain.import_pattern` (copies a pattern's files and `PATTERN.md` into `<worktree>/.tag/ref/<id>/`, git-excluded) and `brain.note` (write a note, decision or pattern into the project brain).
+
+**Post-run notes.** When an orchestrated run finishes (`done` or `cancelled`) and no brain note mentions it, TAG writes `.tag/brain/notes/run-<id>.md` (goal, tasks with final state and report summaries, outcome, merged commits) and refreshes a managed "Recent runs" block (last 10, `[[note_run-<id>]]` links) between `<!-- tag:runs:start -->` and `<!-- tag:runs:end -->` in `brief.md`. Text outside the markers is never touched.
+
+**Brain browser.** `Leader+B` opens an overlay with a live full-text search box, a results list and a preview of the selected document with its links and backlinks. `Tab` moves to the link list, `Enter` follows a link, `Esc` closes.

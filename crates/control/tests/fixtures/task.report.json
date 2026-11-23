@@ -1,0 +1,11 @@
+{
+  "method": "task.report",
+  "params": {
+    "notes": null,
+    "run": null,
+    "status": "done",
+    "summary": "done",
+    "task": null
+  },
+  "result": {}
+}

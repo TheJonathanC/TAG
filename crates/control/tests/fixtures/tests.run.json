@@ -1,0 +1,16 @@
+{
+  "method": "tests.run",
+  "params": {
+    "command": null,
+    "run": null,
+    "task": null,
+    "timeout_s": 1800,
+    "worktree": "feature-x"
+  },
+  "result": {
+    "commit": "abc123",
+    "duration_s": 1.5,
+    "exit_code": 0,
+    "tail": "ok"
+  }
+}

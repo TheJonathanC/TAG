@@ -17,6 +17,7 @@ pub struct StatusBarProps<'a> {
     pub theme: &'a Theme,
     pub version: &'a str,
     pub available_update: Option<&'a str>,
+    pub project: Option<&'a str>,
 }
 
 pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
@@ -94,6 +95,11 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, props: StatusBarProps) {
             " [MAXIMIZED] ",
             props.theme.accent.add_modifier(Modifier::BOLD),
         ));
+    }
+
+    // Project name
+    if let Some(project) = props.project {
+        spans.push(Span::styled(format!(" ◆ {} ", project), props.theme.accent));
     }
 
     // Right-aligned elements: update indicator (if any) and version

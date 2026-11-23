@@ -1,0 +1,19 @@
+{
+  "method": "tag.hello",
+  "params": {
+    "client": "claude-desktop",
+    "protocol": 1,
+    "token": null
+  },
+  "result": {
+    "client": "claude-desktop",
+    "protocol": 1,
+    "role": "external",
+    "run_scope": null,
+    "tag_version": "0.2.0-beta.1",
+    "tiers": [
+      "read",
+      "act"
+    ]
+  }
+}

@@ -12,8 +12,13 @@ members = [
     "crates/agents",
     "crates/notify",
     "crates/usage",
+    "crates/brain",
     "crates/applets",
+    "crates/orchestrator",
+    "crates/control",
+    "crates/projects",
     "crates/bin",
+    "tools/fake-agent",
 ]
 
 [workspace.package]
@@ -38,9 +43,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 thiserror = "2.0"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tempfile = "3"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+regex = "1"
+schemars = "0.8"
 toml = "0.8"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"

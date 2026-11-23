@@ -1,0 +1,20 @@
+[package]
+name = "tag-brain"
+version = "0.1.0"
+edition.workspace = true
+description = "Markdown knowledge brain with SQLite FTS index for TAG"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
