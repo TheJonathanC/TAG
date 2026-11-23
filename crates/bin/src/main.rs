@@ -1053,6 +1053,36 @@ async fn run_app(
         }
     });
 
+    // Spawn OS signal listener for graceful shutdown & session save on SIGHUP, SIGTERM, SIGINT
+    let sig_tx = event_tx.clone();
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate()).ok();
+            let mut sighup = signal(SignalKind::hangup()).ok();
+            let mut sigint = signal(SignalKind::interrupt()).ok();
+
+            tokio::select! {
+                _ = async {
+                    if let Some(ref mut s) = sigterm { s.recv().await } else { std::future::pending().await }
+                } => {},
+                _ = async {
+                    if let Some(ref mut s) = sighup { s.recv().await } else { std::future::pending().await }
+                } => {},
+                _ = async {
+                    if let Some(ref mut s) = sigint { s.recv().await } else { std::future::pending().await }
+                } => {},
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+
+        let _ = sig_tx.send(AppEvent::Action(Action::Quit));
+    });
+
     // Ensure tmux has mouse mode and responsive window sizing globally enabled if a tmux server is running (asynchronously)
     tokio::task::spawn_blocking(|| {
         if is_tmux_server_running() {
@@ -1264,8 +1294,16 @@ async fn run_app(
                     }
                 }
                 if !state.panes.is_empty() {
-                    let workspaces: Vec<Workspace> =
+                    let mut workspaces: Vec<Workspace> =
                         saved.workspaces.into_iter().map(Into::into).collect();
+                    for ws in &mut workspaces {
+                        for pid in ws.all_panes() {
+                            if !state.panes.contains_key(&pid) {
+                                ws.remove_pane(pid);
+                            }
+                        }
+                        ws.minimized_panes.retain(|p| state.panes.contains_key(p));
+                    }
                     state.layout_mgr =
                         LayoutManager::from_workspaces(workspaces, saved.active_workspace_id);
                     // Drop layout slots for panes that failed to respawn
@@ -1574,6 +1612,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
             state.panes.remove(&pane_id);
             state.attention_queue.clear_by_pane(pane_id);
             state.needs_clear = true;
+            save_session_to_disk(state);
             false
         }
         AppEvent::AgentHook(payload) => {
@@ -1688,6 +1727,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                             }
                         }
                         state.rename_prompt = None;
+                        save_session_to_disk(state);
                     }
                     KeyCode::Esc => {
                         state.rename_prompt = None;
@@ -2189,6 +2229,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 }
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(target_pid);
+                                save_session_to_disk(state);
                             } else {
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(target_pid);
@@ -2212,6 +2253,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 }
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(target_pid);
+                                save_session_to_disk(state);
                             } else {
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(target_pid);
@@ -2252,6 +2294,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                 } else {
                                     ws.minimize_pane(target_pid);
                                 }
+                                save_session_to_disk(state);
                             }
                         }
                     }
@@ -2262,6 +2305,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                             state.layout_mgr.switch_workspace(target_ws);
                             state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
                             state.layout_mgr.active_workspace_mut().toggle_zoom();
+                            save_session_to_disk(state);
                         }
                     }
                     _ => {}
@@ -2302,6 +2346,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                     .restore_pane(first_min, None);
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(first_min);
+                                save_session_to_disk(state);
                                 return false;
                             }
                         }
@@ -2612,6 +2657,7 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                     .restore_pane(first_min, None);
                                 state.layout_mgr.active_workspace_mut().focused_pane =
                                     Some(first_min);
+                                save_session_to_disk(state);
                                 return false;
                             }
                         }
@@ -2639,11 +2685,13 @@ fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> bool {
                                         state.layout_mgr.active_workspace_mut().focused_pane =
                                             Some(pid);
                                         state.layout_mgr.active_workspace_mut().toggle_zoom();
+                                        save_session_to_disk(state);
                                         return false;
                                     }
                                     // 3. Clicked on minimize button [_]
                                     if col >= rect.x + rect.width.saturating_sub(12) {
                                         state.layout_mgr.active_workspace_mut().minimize_pane(pid);
+                                        save_session_to_disk(state);
                                         return false;
                                     }
                                 }
@@ -3135,6 +3183,7 @@ fn handle_git_overlay_key(state: &mut AppState, key: crossterm::event::KeyEvent)
             if let Some(wt) = selected_worktree {
                 state.git_state.is_open = false;
                 if open_shell_in(state, format!("wt: {}", wt.name), wt.path) {
+                    save_session_to_disk(state);
                     push_toast(
                         state,
                         "Worktree Opened",
@@ -3272,10 +3321,12 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleZoom => {
             state.layout_mgr.active_workspace_mut().toggle_zoom();
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::UndoLayout => {
             state.layout_mgr.active_workspace_mut().undo_layout();
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::RenamePane(target_pid) => {
@@ -3320,6 +3371,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     .layout_mgr
                     .active_workspace_mut()
                     .split_current(new_id, direction);
+                save_session_to_disk(state);
                 state.needs_clear = true;
             }
         }
@@ -3345,14 +3397,17 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::SwitchWorkspace(ws_id) => {
             state.layout_mgr.switch_workspace(ws_id);
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::NextWorkspace => {
             state.layout_mgr.next_workspace();
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::PrevWorkspace => {
             state.layout_mgr.prev_workspace();
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::NewWorkspace => {
@@ -3384,6 +3439,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     .layout_mgr
                     .active_workspace_mut()
                     .add_initial_pane(new_pid);
+                save_session_to_disk(state);
                 state.needs_clear = true;
             }
         }
@@ -3406,6 +3462,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                     }
                     state.attention_queue.clear_by_pane(*pid);
                 }
+                save_session_to_disk(state);
                 state.needs_clear = true;
                 state.toasts.push(Toast {
                     title: "Workspace Closed".into(),
@@ -3473,6 +3530,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                             .layout_mgr
                             .active_workspace_mut()
                             .split_current(pid, SplitDirection::Vertical);
+                        save_session_to_disk(state);
                         state.needs_clear = true;
                     }
                     Err(e) => {
@@ -3529,6 +3587,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                         .layout_mgr
                         .active_workspace_mut()
                         .split_current(pid, SplitDirection::Vertical);
+                    save_session_to_disk(state);
                     state.needs_clear = true;
                 }
                 Err(e) => {
@@ -3661,12 +3720,14 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 .layout_mgr
                 .active_workspace_mut()
                 .split_current(pid, SplitDirection::Vertical);
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::MinimizePane(target_pid) => {
             let pid = target_pid.or(state.layout_mgr.active_workspace().focused_pane);
             if let Some(pid) = pid {
                 state.layout_mgr.active_workspace_mut().minimize_pane(pid);
+                save_session_to_disk(state);
                 state.needs_clear = true;
                 state.toasts.push(Toast {
                     title: "Pane Minimized".into(),
@@ -3684,6 +3745,7 @@ fn execute_action(state: &mut AppState, action: Action) -> bool {
                 .active_workspace_mut()
                 .restore_pane(target_pid, None);
             state.layout_mgr.active_workspace_mut().focused_pane = Some(target_pid);
+            save_session_to_disk(state);
             state.needs_clear = true;
         }
         Action::Detach => {
@@ -3964,6 +4026,7 @@ fn close_pane(state: &mut AppState, pid: PaneId) {
     }
     state.attention_queue.clear_by_pane(pid);
     state.needs_clear = true;
+    save_session_to_disk(state);
 }
 
 /// Send text to the focused pane as a paste (bracketed only if the program enabled it).
@@ -4054,7 +4117,16 @@ fn save_session_to_disk(state: &AppState) {
         .join("session.json");
     let mut saved = SavedSession::new(state.layout_mgr.active_workspace_id());
     for ws in state.layout_mgr.workspaces() {
-        saved.workspaces.push(SavedWorkspace::from(ws));
+        let mut clean_ws = ws.clone();
+        for pid in clean_ws.all_panes() {
+            if !state.panes.contains_key(&pid) {
+                clean_ws.remove_pane(pid);
+            }
+        }
+        clean_ws
+            .minimized_panes
+            .retain(|p| state.panes.contains_key(p));
+        saved.workspaces.push(SavedWorkspace::from(&clean_ws));
     }
     for (&pid, pane) in &state.panes {
         let (_, _, cwd) = pane.running_process();
