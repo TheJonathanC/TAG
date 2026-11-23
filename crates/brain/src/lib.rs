@@ -8,6 +8,7 @@
 mod doc;
 mod error;
 mod index;
+mod init;
 mod pin;
 
 pub use doc::{
@@ -16,6 +17,7 @@ pub use doc::{
 };
 pub use error::{Error, Result};
 pub use index::{Brain, BrainRoot, DocMeta, ReindexStats, SearchHit};
+pub use init::{generate_brief, init_project, BriefDraft, InitReport};
 pub use pin::{find_doc_file, pin_pattern, remove_doc};
 
 #[cfg(test)]

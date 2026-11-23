@@ -4,7 +4,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Subcommand;
 use std::path::{Path, PathBuf};
 use tag_brain::{
-    find_doc_file, pin_pattern, project_id, remove_doc, render_doc, Brain, BrainRoot, DocKind,
+    find_doc_file, init_project, pin_pattern, project_id, remove_doc, render_doc, Brain, BrainRoot,
+    DocKind,
 };
 
 #[derive(Subcommand, Debug)]
@@ -26,6 +27,12 @@ pub(crate) enum BrainCommands {
         /// Store in the global brain instead of the project brain
         #[arg(long)]
         global: bool,
+    },
+    /// Generate a project brief and `.tag/project.toml` for the current repo
+    Init {
+        /// Do not create `.tag/project.toml`
+        #[arg(long)]
+        no_project_toml: bool,
     },
     /// List brain documents
     Ls {
@@ -116,6 +123,27 @@ pub(crate) fn handle_brain_command(cmd: BrainCommands) -> Result<()> {
             println!("{}", doc.frontmatter.id);
             println!("{}", doc.path.display());
             let _ = open_brain(Some(&repo));
+        }
+        BrainCommands::Init { no_project_toml } => {
+            let repo = repo.ok_or_else(|| anyhow!("not inside a git repository"))?;
+            let rep = init_project(&repo, !no_project_toml)?;
+            if rep.wrote_generated_instead {
+                println!(
+                    "brief.md already exists; wrote {} (review and merge by hand)",
+                    rep.brief_path.display()
+                );
+            } else {
+                println!("wrote {}", rep.brief_path.display());
+            }
+            match rep.project_toml {
+                Some(p) => println!("wrote {}", p.display()),
+                None if !no_project_toml => {
+                    println!(".tag/project.toml already exists; left untouched")
+                }
+                None => {}
+            }
+            open_brain(Some(&repo))?;
+            println!("reindexed brain");
         }
         BrainCommands::Ls { kind, global, all } => {
             let kind = parse_kind(&kind)?;
