@@ -59,6 +59,62 @@ pub struct Config {
     pub agents: HashMap<String, AgentProfileConfig>,
     pub custom_keys: HashMap<String, String>,
     pub run_in_background: bool,
+    /// Control plane (`[control]`): socket, client tiers.
+    pub control: ControlConfig,
+}
+
+/// `[control]` section: the local control socket used by `tag ctl`, `tag mcp` and agents.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ControlConfig {
+    /// Serve the control socket.
+    pub enabled: bool,
+    /// Per-client permission tiers for clients without a scoped token
+    /// (`[control.clients.<name>] tiers = ["read", "act"]`). Unknown clients get `["read"]`.
+    pub clients: HashMap<String, ControlClientConfig>,
+}
+
+/// `[control.clients.<name>]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControlClientConfig {
+    pub tiers: Vec<crate::control::Tier>,
+}
+
+impl Default for ControlConfig {
+    fn default() -> Self {
+        use crate::control::Tier::{Act, Dangerous, Read};
+        let mut clients = HashMap::new();
+        // The human's own CLI.
+        clients.insert(
+            "ctl".to_string(),
+            ControlClientConfig {
+                tiers: vec![Read, Act, Dangerous],
+            },
+        );
+        // External assistants: read and act; merges/kills stay with the human.
+        for name in ["mcp", "claude-desktop"] {
+            clients.insert(
+                name.to_string(),
+                ControlClientConfig {
+                    tiers: vec![Read, Act],
+                },
+            );
+        }
+        Self {
+            enabled: true,
+            clients,
+        }
+    }
+}
+
+impl ControlConfig {
+    /// Tiers for an untokened client name.
+    pub fn tiers_for(&self, client: &str) -> Vec<crate::control::Tier> {
+        self.clients
+            .get(client)
+            .map(|c| c.tiers.clone())
+            .unwrap_or_else(|| vec![crate::control::Tier::Read])
+    }
 }
 
 impl Default for Config {
@@ -122,6 +178,7 @@ impl Default for Config {
             agents,
             custom_keys: HashMap::new(),
             run_in_background: false,
+            control: ControlConfig::default(),
         }
     }
 }

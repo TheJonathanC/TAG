@@ -1,6 +1,7 @@
 //! Application state, event loop, rendering and input handling for the TAG UI.
 
 pub(crate) mod actions;
+pub(crate) mod control;
 pub(crate) mod event_loop;
 pub(crate) mod events;
 pub(crate) mod git_ui;
@@ -13,6 +14,7 @@ pub(crate) mod state;
 pub(crate) mod tray;
 
 pub(crate) use actions::*;
+pub(crate) use control::*;
 pub(crate) use event_loop::*;
 pub(crate) use events::*;
 pub(crate) use git_ui::*;

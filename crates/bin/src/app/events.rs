@@ -1304,6 +1304,10 @@ pub(crate) fn handle_app_event_inner(state: &mut AppState, event: AppEvent) -> b
             state.is_dirty = true;
             false
         }
+        AppEvent::Control(envelope) => {
+            handle_control(state, envelope);
+            false
+        }
         _ => false,
     }
 }

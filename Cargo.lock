@@ -2435,6 +2435,7 @@ dependencies = [
  "tag-agents",
  "tag-applets",
  "tag-clipboard",
+ "tag-control",
  "tag-core",
  "tag-git",
  "tag-keys",
@@ -2513,6 +2514,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "libc",
+ "rand",
  "schemars",
  "serde",
  "serde_json",

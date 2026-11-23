@@ -36,6 +36,7 @@ tag-agents = { path = "../agents", version = "0.1.0" }
 tag-notify = { path = "../notify", version = "0.1.0" }
 tag-usage = { path = "../usage", version = "0.1.0" }
 tag-applets = { path = "../applets", version = "0.1.0" }
+tag-control = { path = "../control", version = "0.1.0" }
 tokio = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

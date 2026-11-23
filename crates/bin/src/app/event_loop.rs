@@ -91,6 +91,15 @@ pub(crate) async fn run_app(
             10,
         );
     }
+    if let Some(e) = state.start_control_server().await {
+        push_toast(
+            &mut state,
+            "Control Socket Unavailable",
+            e,
+            ToastLevel::Error,
+            10,
+        );
+    }
     if let Some(e) = hook_error {
         push_toast(
             &mut state,

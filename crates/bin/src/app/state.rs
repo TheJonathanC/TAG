@@ -90,6 +90,12 @@ pub(crate) struct AppState {
     pub(crate) state_tx: broadcast::Sender<StateEvent>,
     /// Last published agent status per pane, used to detect transitions.
     pub(crate) last_status: HashMap<PaneId, String>,
+    /// When each pane's status last changed (for `agent.status`).
+    pub(crate) status_since: HashMap<PaneId, chrono::DateTime<chrono::Utc>>,
+    /// Scoped control tokens minted for agents TAG launches.
+    pub(crate) tokens: tag_control::TokenRegistry,
+    /// Running control socket server, if enabled.
+    pub(crate) control_server: Option<tag_control::ServerHandle>,
 }
 
 /// Capacity of the [`StateEvent`] broadcast channel.
@@ -160,7 +166,38 @@ impl AppState {
             paths,
             state_tx,
             last_status: HashMap::new(),
+            status_since: HashMap::new(),
+            tokens: tag_control::TokenRegistry::default(),
+            control_server: None,
         })
+    }
+
+    /// Start the control socket server (no-op when `[control] enabled = false`).
+    /// Returns an error message suitable for a toast on failure.
+    pub(crate) async fn start_control_server(&mut self) -> Option<String> {
+        if !self.config.control.enabled {
+            return None;
+        }
+        let path = self.paths.control_socket_path();
+        let mut settings =
+            tag_control::ServerSettings::new(TAG_VERSION, self.config.control.clone());
+        settings.audit_path = Some(self.paths.state_dir.join("control-audit.jsonl"));
+        match tag_control::serve(
+            path.clone(),
+            settings,
+            self.tokens.clone(),
+            self.event_tx.clone(),
+            self.state_tx.clone(),
+        )
+        .await
+        {
+            Ok(handle) => {
+                std::env::set_var(tag_control::discovery::SOCKET_ENV, handle.path());
+                self.control_server = Some(handle);
+                None
+            }
+            Err(e) => Some(format!("Could not listen on {}: {}", path.display(), e)),
+        }
     }
 
     /// Publish a state event. Having no subscribers is not an error.
@@ -184,8 +221,11 @@ impl AppState {
         self.last_status
             .retain(|pid, _| self.panes.contains_key(pid));
         let now = chrono::Utc::now();
+        self.status_since
+            .retain(|pid, _| self.panes.contains_key(pid));
         for (pid, from, to) in changes {
             self.last_status.insert(pid, to.clone());
+            self.status_since.insert(pid, now);
             self.publish(StateEvent::PaneStatusChanged {
                 pane: pid,
                 from,

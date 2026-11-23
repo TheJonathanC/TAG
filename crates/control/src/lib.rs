@@ -12,9 +12,11 @@ pub mod client;
 pub mod discovery;
 pub mod methods;
 pub mod protocol;
+pub mod server;
 
 pub use client::{AsyncControlClient, ClientError, ControlClient};
 pub use methods::{method_info, Method, MethodInfo, CATALOG, PROTOCOL_VERSION};
+pub use server::{serve, ServerHandle, ServerSettings, TokenGrant, TokenRegistry};
 pub use tag_core::control::{
     codes, ClientCtx, ControlEnvelope, ControlError, ControlResult, ReplyHandle, Role, Tier,
 };
