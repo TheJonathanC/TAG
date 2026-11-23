@@ -261,6 +261,15 @@ impl CommandRegistry {
                 action: Action::ToggleGitOverlay,
             },
             Command {
+                id: "tools.brain".into(),
+                name: "Brain Browser".into(),
+                category: CommandCategory::Tools,
+                description: "Search the project brain, preview docs, follow links and backlinks"
+                    .into(),
+                default_shortcut: Some("^Space+B".into()),
+                action: Action::ToggleBrainOverlay,
+            },
+            Command {
                 id: "tools.snippets".into(),
                 name: "Snippet Bank".into(),
                 category: CommandCategory::Tools,

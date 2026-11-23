@@ -209,6 +209,9 @@ pub(crate) fn render_frame(frame: &mut ratatui::Frame, state: &mut AppState) {
     if let Some(ref rename_state) = state.rename_prompt {
         render_rename_modal(frame, size, rename_state, &state.theme);
     }
+    if state.brain_state.is_open {
+        tag_ui::render_brain_overlay(frame, size, &state.brain_state, &state.theme);
+    }
     if state.run_view.is_open {
         let data = build_run_view_data(state);
         tag_ui::render_run_view(frame, size, &data, &state.run_view, &state.theme);
@@ -260,4 +263,5 @@ pub(crate) fn is_any_overlay_open(state: &AppState) -> bool {
         || state.tab_tray.is_open
         || state.workers.is_open
         || state.peek.is_some()
+        || state.brain_state.is_open
 }

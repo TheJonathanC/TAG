@@ -61,6 +61,7 @@ pub enum Action {
     ToggleGitOverlay,
     ToggleSnippetOverlay,
     ToggleVaultOverlay,
+    ToggleBrainOverlay,
     ToggleQuickSwitcher,
 
     // Modes & Toggles

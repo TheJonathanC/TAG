@@ -120,6 +120,14 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
                 state.vault_state.status_message = None;
             }
         }
+        Action::ToggleBrainOverlay => {
+            if state.brain_state.is_open {
+                state.brain_state.close();
+                state.brain = None;
+            } else {
+                open_brain_overlay(state);
+            }
+        }
         Action::ToggleQuickSwitcher => {
             state.palette.is_open = true;
             refresh_tmux_commands(&mut state.command_registry);

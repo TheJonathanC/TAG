@@ -995,6 +995,61 @@ fn approve_plan(state: &mut AppState, client: &ClientCtx, p: RunRef) -> ControlR
     respond(run)
 }
 
+/// Write the post-run brain note (if the conductor did not) and refresh the
+/// "Recent runs" block in the project brief. Best-effort; never fails the run.
+fn record_run_in_brain(active: &ActiveRun) {
+    use tag_orchestrator::{RunEventKind, TaskState};
+    let brain_dir = active.repo.join(".tag").join("brain");
+    let events = active.store.events(&active.run.id).unwrap_or_default();
+    let tasks = active
+        .run
+        .tasks
+        .iter()
+        .map(|t| {
+            let mut commits: Vec<String> = events
+                .iter()
+                .filter_map(|e| match &e.kind {
+                    RunEventKind::TaskState {
+                        task,
+                        to: TaskState::Merged,
+                        reason: Some(r),
+                        ..
+                    } if task == &t.id && !r.trim().is_empty() => Some(r.trim().to_string()),
+                    _ => None,
+                })
+                .collect();
+            if commits.is_empty() && t.state == TaskState::Merged {
+                commits.extend(t.last_test.as_ref().map(|l| l.commit.clone()));
+            }
+            tag_brain::RunNoteTask {
+                id: t.id.clone(),
+                title: t.title.clone(),
+                state: serde_json::to_value(t.state)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default(),
+                summary: t.report.as_ref().map(|r| r.summary.clone()),
+                commits,
+            }
+        })
+        .collect();
+    let state = serde_json::to_value(active.run.state)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+    let input = tag_brain::RunNoteInput {
+        run_id: active.run.id.clone(),
+        goal: active.run.goal.clone(),
+        state: state.clone(),
+        tasks,
+        project: Some(tag_brain::project_id(&active.repo)),
+        created: Some(chrono::Utc::now().format("%Y-%m-%d").to_string()),
+    };
+    if tag_brain::write_run_note(&brain_dir, &input).is_ok() {
+        let _ = tag_brain::update_recent_runs(&brain_dir, &input.run_id, &input.goal, &state);
+    }
+}
+
 fn run_cancel(state: &mut AppState, client: &ClientCtx, p: RunCancelParams) -> ControlResult {
     require_own_run(client, &p.run)?;
     let (run, panes) = with_run(state, &p.run, |active, events| {
@@ -1015,6 +1070,9 @@ fn run_cancel(state: &mut AppState, client: &ClientCtx, p: RunCancelParams) -> C
                 close_pane(state, PaneId(pane as u32));
             }
         }
+    }
+    if let Some(a) = state.runs.get(&p.run) {
+        record_run_in_brain(a);
     }
     state.tokens.revoke_run(&p.run);
     state.runs.remove(&p.run);
@@ -1435,6 +1493,9 @@ fn schedule(state: &mut AppState, run_id: &str) {
                     ev.push(a.run.transition(RunState::Done, None).map_err(orch_err)?);
                     Ok(())
                 });
+                if let Some(a) = state.runs.get(run_id) {
+                    record_run_in_brain(a);
+                }
                 notify_conductor(
                     state,
                     run_id,

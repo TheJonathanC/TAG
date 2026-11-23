@@ -128,6 +128,24 @@ fn auto_merge_run_completes() {
     assert!(repo.join("t1.txt").exists() && repo.join("t2.txt").exists());
     assert_eq!(done["tasks"][0]["report"]["summary"], "wrote t1.txt");
     assert_eq!(done["tasks"][0]["last_test"]["exit_code"], 0);
+    // The post-run note lands in the project brain (T5.7).
+    let notes = repo.join(".tag/brain/notes");
+    let mut found = false;
+    for _ in 0..50 {
+        found = std::fs::read_dir(&notes)
+            .map(|rd| {
+                rd.flatten()
+                    .any(|e| e.file_name().to_string_lossy().starts_with("run-"))
+            })
+            .unwrap_or(false);
+        if found {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(found, "expected .tag/brain/notes/run-*.md");
+    let brief = std::fs::read_to_string(repo.join(".tag/brain/brief.md")).unwrap();
+    assert!(brief.contains("<!-- tag:runs:start -->"));
     assert!(done["tasks"][0]["branch"]
         .as_str()
         .unwrap()

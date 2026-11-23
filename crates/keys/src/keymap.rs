@@ -127,6 +127,7 @@ impl Keymap {
         leader_bindings.insert('w', (Action::NewWorkspace, "New workspace"));
         leader_bindings.insert('W', (Action::CloseActiveWorkspace, "Close workspace"));
         leader_bindings.insert('b', (Action::ToggleTabTray, "Tab tray"));
+        leader_bindings.insert('B', (Action::ToggleBrainOverlay, "Brain browser"));
         leader_bindings.insert(' ', (Action::ToggleQuickSwitcher, "Quick switcher"));
         leader_bindings.insert('a', (Action::ToggleAttentionQueue, "Attention queue"));
         leader_bindings.insert('u', (Action::ToggleUsageOverlay, "Usage & tokens"));

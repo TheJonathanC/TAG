@@ -41,3 +41,4 @@ Plan: `docs/orchestration-roadmap.md`. Based on `origin/main` (`6403cc2`).
 | T6.1 HTTP MCP | done | 708d8f6 | feature `mcp-http` (off by default); `tag mcp --http 127.0.0.1:PORT` + `TAG_MCP_HTTP_TOKEN`; POST /mcp only, no SSE |
 | T4.5 attention grouping | done | fec351c | grouped by source with headers; `p` approve plan (also resumes budget-paused runs), `m` merge, `r` reply prompt; results come back as toasts |
 | T4.1 workers table / T4.3 peek / T4.4 card strip | done | 52d877d | **Key deviations:** `Leader+A` workers table (plan's `^Space W` = close workspace), `Leader+f` peek (`e` = vault). Peek: `i` input on, `Alt+i` off. Table: ↑/j move, `k` kill (y/n), `q`/Esc close. Cards = the active workspace's minimized panes. Only TestBackend-tested, not tried in a live UI |
+| T4.2 run view | done | c7c79d2 | **Spec deviation:** an overlay on `Leader+O` (plan's `^Space R` = rename), not a `PaneKind::RunView` pane, so it needs no session save/restore |

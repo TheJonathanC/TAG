@@ -1,3 +1,4 @@
+pub mod brain_overlay;
 pub mod card_strip;
 pub mod empty_state;
 pub mod first_run_tour;
@@ -12,6 +13,9 @@ pub mod toast;
 pub mod which_key;
 pub mod workers_table;
 
+pub use brain_overlay::{
+    render_brain_overlay, BrainFocus, BrainOverlayState, BrainPreview, BrainResult,
+};
 pub use card_strip::{
     card_at, card_text, format_elapsed, render_card_strip, status_glyph, CardItem,
 };

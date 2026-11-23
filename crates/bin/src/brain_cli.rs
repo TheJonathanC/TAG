@@ -50,6 +50,21 @@ pub(crate) enum BrainCommands {
     Show { id: String },
     /// Delete a document
     Rm { id: String },
+    /// Write a managed brain block into CLAUDE.md, AGENTS.md and GEMINI.md
+    SyncAgentFiles {
+        /// Create the files if they do not exist
+        #[arg(long)]
+        create: bool,
+    },
+    /// Export the brain link graph as a self-contained HTML file
+    Graph {
+        /// Only this project id (plus global docs); `.` means the current repo
+        #[arg(long)]
+        project: Option<String>,
+        /// Output file
+        #[arg(short, long, default_value = "graph.html")]
+        output: PathBuf,
+    },
     /// Full-text search
     Search {
         query: String,
@@ -88,7 +103,7 @@ fn parse_kind(k: &Option<String>) -> Result<Option<DocKind>> {
     }
 }
 
-fn open_brain(repo: Option<&Path>) -> Result<(Brain, Vec<PathBuf>)> {
+pub(crate) fn open_brain(repo: Option<&Path>) -> Result<(Brain, Vec<PathBuf>)> {
     let mut roots = Vec::new();
     if let Some(r) = repo {
         roots.push(BrainRoot {
@@ -189,6 +204,26 @@ pub(crate) fn handle_brain_command(cmd: BrainCommands) -> Result<()> {
             let p = remove_doc(&roots, &id)?;
             println!("removed {id} ({})", p.display());
             open_brain(repo.as_deref())?;
+        }
+        BrainCommands::SyncAgentFiles { create } => {
+            let repo = repo.ok_or_else(|| anyhow!("not inside a git repository"))?;
+            for (path, outcome) in tag_brain::sync_agent_files(&repo, create)? {
+                println!("{:?}: {}", outcome, path.display());
+            }
+        }
+        BrainCommands::Graph { project, output } => {
+            let (brain, _) = open_brain(repo.as_deref())?;
+            let project = match project.as_deref() {
+                Some(".") => Some(project_id(
+                    repo.as_deref()
+                        .ok_or_else(|| anyhow!("not inside a git repository"))?,
+                )),
+                other => other.map(String::from),
+            };
+            let html = tag_brain::graph_html(&brain, project.as_deref())?;
+            std::fs::write(&output, html)
+                .with_context(|| format!("writing {}", output.display()))?;
+            println!("wrote {}", output.display());
         }
         BrainCommands::Search { query, kind, limit } => {
             let kind = parse_kind(&kind)?;
