@@ -612,4 +612,5 @@ tag brain ls [--kind pattern] [--global] [--all]   # list documents (project + g
 tag brain show pat_jwt-middleware                  # document, links and backlinks
 tag brain search "refresh token" [--kind K] [--limit N]
 tag brain rm pat_jwt-middleware                    # delete the file
+tag brain sync-agent-files [--create]              # write a managed brain block (brief summary, decisions, patterns, search hint) into CLAUDE.md, AGENTS.md and GEMINI.md; only text between the tag:brain markers is touched, missing files are created only with --create
 ```

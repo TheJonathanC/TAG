@@ -5,12 +5,17 @@
 //! The SQLite index is only a cache: it can always be regenerated from the
 //! files with [`Brain::reindex`].
 
+mod agent_files;
 mod doc;
 mod error;
 mod index;
 mod init;
 mod pin;
 
+pub use agent_files::{
+    apply_block, render_agent_block, sync_agent_files, SyncOutcome, AGENT_FILES, BLOCK_END,
+    BLOCK_START,
+};
 pub use doc::{
     extract_links, parse_doc, project_id, render_doc, slugify, write_doc, Doc, DocKind,
     Frontmatter, Source,

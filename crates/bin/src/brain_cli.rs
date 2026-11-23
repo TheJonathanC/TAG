@@ -50,6 +50,12 @@ pub(crate) enum BrainCommands {
     Show { id: String },
     /// Delete a document
     Rm { id: String },
+    /// Write a managed brain block into CLAUDE.md, AGENTS.md and GEMINI.md
+    SyncAgentFiles {
+        /// Create the files if they do not exist
+        #[arg(long)]
+        create: bool,
+    },
     /// Full-text search
     Search {
         query: String,
@@ -189,6 +195,12 @@ pub(crate) fn handle_brain_command(cmd: BrainCommands) -> Result<()> {
             let p = remove_doc(&roots, &id)?;
             println!("removed {id} ({})", p.display());
             open_brain(repo.as_deref())?;
+        }
+        BrainCommands::SyncAgentFiles { create } => {
+            let repo = repo.ok_or_else(|| anyhow!("not inside a git repository"))?;
+            for (path, outcome) in tag_brain::sync_agent_files(&repo, create)? {
+                println!("{:?}: {}", outcome, path.display());
+            }
         }
         BrainCommands::Search { query, kind, limit } => {
             let kind = parse_kind(&kind)?;
