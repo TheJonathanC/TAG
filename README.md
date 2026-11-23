@@ -363,6 +363,37 @@ Default leader key: `Ctrl+Space`
 
 ---
 
+## Connecting assistants (MCP)
+
+`tag mcp` runs a Model Context Protocol server over stdio. It exposes TAG's control methods (list panes, read agent output, spawn agents and worktrees, and so on) as tools named `tag_<method>`, for example `tag_panes_list` and `tag_pane_spawn`. TAG must be running (`tag` or `tag daemon`); the server connects lazily and retries on each call.
+
+**Claude desktop app** (`claude_desktop_config.json`):
+
+```json
+{"mcpServers": {"tag": {"command": "tag", "args": ["mcp", "--client", "claude-desktop"]}}}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add tag -- tag mcp --client claude-code
+```
+
+**agy:**
+
+```bash
+agy mcp add tag -- tag mcp --client agy
+```
+
+The `--client` name decides which tools are offered. Unknown client names get read-only access; `mcp` (the default) and `claude-desktop` get read and act tiers. Dangerous tools (merge, remove, kill) are only offered to clients granted the `dangerous` tier, and may still wait for human approval in TAG. To change a client's tiers, add this to `config.toml`:
+
+```toml
+[control.clients.claude-code]
+tiers = ["read", "act"]
+```
+
+---
+
 ## CLI reference and helper utilities
 
 ### `tag`

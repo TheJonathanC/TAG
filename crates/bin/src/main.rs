@@ -72,6 +72,19 @@ fn main() -> Result<(), anyhow::Error> {
         std::process::exit(ctl::run_ctl(cmd, json, socket)?);
     }
 
+    if let Some(Commands::Mcp { client, socket }) = cli.command {
+        let opts = tag_control::mcp::McpOptions {
+            client_name: client,
+            socket,
+            token: None,
+        };
+        return Ok(tag_control::mcp::run_mcp(
+            std::io::stdin().lock(),
+            std::io::stdout(),
+            opts,
+        )?);
+    }
+
     if let Some(Commands::Brain { cmd }) = cli.command {
         return brain_cli::handle_brain_command(cmd);
     }

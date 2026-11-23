@@ -25,6 +25,15 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
+    /// Run an MCP server over stdio exposing TAG control methods as tools
+    Mcp {
+        /// Client name sent to TAG (decides default permission tiers)
+        #[arg(long, default_value = "mcp")]
+        client: String,
+        /// Control socket path (default: auto-discover)
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
     /// Configure agent notification hooks
     SetupHooks {
         /// Target agent (claude, codex, agy)
