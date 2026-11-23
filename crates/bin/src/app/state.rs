@@ -96,6 +96,15 @@ pub(crate) struct AppState {
     pub(crate) tokens: tag_control::TokenRegistry,
     /// Running control socket server, if enabled.
     pub(crate) control_server: Option<tag_control::ServerHandle>,
+    /// Registry of known projects (git repo roots), persisted in the state dir.
+    pub(crate) projects: tag_projects::ProjectRegistry,
+    /// Set when `projects.json` failed to parse; saving is skipped so it is never overwritten.
+    pub(crate) projects_load_error: Option<String>,
+    /// Cached name of the active project for the status bar.
+    pub(crate) active_project_name: Option<String>,
+    /// Repo root the cached name was resolved from, and when it was last checked.
+    pub(crate) active_project_root: Option<std::path::PathBuf>,
+    pub(crate) last_project_check: std::time::Instant,
 }
 
 /// Capacity of the [`StateEvent`] broadcast channel.
@@ -118,6 +127,15 @@ impl AppState {
         let vault = VaultStore::new(paths.vault_path.clone(), config.vault_idle_timeout_mins);
         let (git_tx, git_rx) = std::sync::mpsc::channel();
         let (state_tx, _) = broadcast::channel(STATE_EVENT_CAPACITY);
+        let projects_path = paths.state_dir.join("projects.json");
+        let (projects, projects_load_error) =
+            match tag_projects::ProjectRegistry::load(&projects_path) {
+                Ok(r) => (r, None),
+                Err(e) => (
+                    tag_projects::ProjectRegistry::empty(projects_path),
+                    Some(e.to_string()),
+                ),
+            };
         Ok(AppState {
             panes: HashMap::new(),
             next_pane_id: 1,
@@ -169,6 +187,11 @@ impl AppState {
             status_since: HashMap::new(),
             tokens: tag_control::TokenRegistry::default(),
             control_server: None,
+            projects,
+            projects_load_error,
+            active_project_name: None,
+            active_project_root: None,
+            last_project_check: std::time::Instant::now(),
         })
     }
 
@@ -198,6 +221,41 @@ impl AppState {
             }
             Err(e) => Some(format!("Could not listen on {}: {}", path.display(), e)),
         }
+    }
+
+    fn focused_pane_cwd(&self) -> Option<std::path::PathBuf> {
+        let id = self.layout_mgr.active_workspace().focused_pane?;
+        self.panes.get(&id)?.cwd()
+    }
+
+    /// Resolve the active project from the focused pane's cwd, record it in the
+    /// registry and persist (unless the registry failed to load).
+    pub(crate) fn active_project(&mut self) -> Option<tag_projects::Project> {
+        let cwd = self.focused_pane_cwd();
+        let project = self.projects.resolve(cwd.as_deref())?;
+        self.projects.set_active(&project.id);
+        if self.projects_load_error.is_none() {
+            let _ = self.projects.save();
+        }
+        Some(project)
+    }
+
+    /// Cheap refresh of the cached status-bar project name; only re-resolves
+    /// (and saves) when the focused pane's repo root changed. Returns true if the name changed.
+    pub(crate) fn refresh_active_project_name(&mut self) -> bool {
+        self.last_project_check = std::time::Instant::now();
+        let root = self
+            .focused_pane_cwd()
+            .and_then(|c| tag_projects::find_repo_root(&c));
+        if root.is_some() && root == self.active_project_root {
+            return false;
+        }
+        let before = self.active_project_name.clone();
+        if root.is_some() {
+            self.active_project_root = root;
+        }
+        self.active_project_name = self.active_project().map(|p| p.name);
+        before != self.active_project_name
     }
 
     /// Publish a state event. Having no subscribers is not an error.

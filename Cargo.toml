@@ -16,6 +16,7 @@ members = [
     "crates/applets",
     "crates/orchestrator",
     "crates/control",
+    "crates/projects",
     "crates/bin",
     "tools/fake-agent",
 ]

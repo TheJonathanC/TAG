@@ -2441,6 +2441,7 @@ dependencies = [
  "tag-keys",
  "tag-layout",
  "tag-notify",
+ "tag-projects",
  "tag-pty",
  "tag-ui",
  "tag-usage",
@@ -2604,6 +2605,18 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+]
+
+[[package]]
+name = "tag-projects"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
