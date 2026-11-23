@@ -52,3 +52,10 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 arboard = { workspace = true }
 libc = { workspace = true }
+
+[dev-dependencies]
+tag-control = { path = "../control", version = "0.1.0" }
+tag-core = { path = "../core", version = "0.1.0" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

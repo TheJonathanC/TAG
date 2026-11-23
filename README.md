@@ -399,6 +399,26 @@ tag vault get ANTHROPIC_API_KEY      # Retrieve secret value
 tag vault remove ANTHROPIC_API_KEY   # Delete secret from vault
 ```
 
+### `tag ctl`
+Client for the running TAG's control plane (works from inside TAG panes). The socket comes from `--socket`, else `$TAG_CONTROL_SOCKET`, else discovery; `$TAG_CONTROL_TOKEN` supplies a scoped token. Add `--json` to any subcommand for the raw JSON result. Errors print `error: <message> (code <code>)` to stderr; exit code 1 on error, 2 on `wait` timeout, 3 when TAG is not running.
+
+```bash
+tag ctl call <method> [json|-]       # Raw JSON-RPC call (params default to {}, '-' reads stdin)
+tag ctl ls                           # Panes: id, kind, profile, status, visibility, title, cwd
+tag ctl read <pane> [--lines N] [--max-bytes N]
+tag ctl spawn <profile> [--worktree NAME] [--base REF] [--prompt TEXT | --prompt-file F] \
+    [--visibility hidden|card|pane] [--cwd DIR] [--title T] [--secret NAME]...   # Prints pane id
+tag ctl send <pane> <text> [--no-submit]
+tag ctl wait <pane> [--until done,awaiting_input,...] [--timeout SECS]   # Exit 0 matched, 2 timeout
+tag ctl diff <worktree> [--stat]
+tag ctl test <worktree> [--command CMD]       # Exit code is the test exit code
+tag ctl merge <worktree> [--no-require-tests]
+tag ctl status <pane>
+tag ctl runs                         # run.list
+tag ctl run <id>                     # run.get
+tag ctl subscribe [--kinds a,b]      # Stream events as JSON lines until killed
+```
+
 ### `cockpit-notify` / `tag-notify`
 IPC helper binary called by agent hooks to post events to TAG's Unix domain socket.
 
