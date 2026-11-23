@@ -1,0 +1,10 @@
+[package]
+name = "fake-agent"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Scripted fake AI agent CLI used as an end-to-end test fixture for TAG"
+
+[dependencies]
+regex.workspace = true
+serde_json.workspace = true
