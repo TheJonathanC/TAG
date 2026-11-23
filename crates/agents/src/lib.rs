@@ -8,4 +8,4 @@ pub use agent_pane::AgentPane;
 pub use hook_server::HookServer;
 pub use profile::AgentProfile;
 pub use setup_hooks::{get_setup_hooks, HookSetupInfo};
-pub use status::AgentStatus;
+pub use status::{AgentStatus, CompletionDetector};

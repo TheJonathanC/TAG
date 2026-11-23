@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tag_core::config::AgentProfileConfig;
+use tag_core::config::{AgentProfileConfig, DoneSignal};
 
 #[derive(Debug, Clone)]
 pub struct AgentProfile {
@@ -13,6 +13,9 @@ pub struct AgentProfile {
     pub hook_type: Option<String>,
     pub status_patterns: Vec<String>,
     pub prompt_snippets: Vec<String>,
+    pub done_signal: Vec<DoneSignal>,
+    pub done_regex: Option<String>,
+    pub idle_done_secs: u64,
 }
 
 impl AgentProfile {
@@ -26,6 +29,9 @@ impl AgentProfile {
             hook_type: config.hook_type.clone(),
             status_patterns: config.status_patterns.clone(),
             prompt_snippets: config.prompt_snippets.clone(),
+            done_signal: config.done_signal.clone(),
+            done_regex: config.done_regex.clone(),
+            idle_done_secs: config.idle_done_secs,
         }
     }
 }

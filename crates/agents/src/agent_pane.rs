@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
 use tag_core::event::{AppEvent, EventResult, HookEvent};
@@ -11,7 +12,7 @@ use tag_core::theme::Theme;
 use tag_pty::PtyPane;
 
 use crate::profile::AgentProfile;
-use crate::status::AgentStatus;
+use crate::status::{AgentStatus, CompletionDetector};
 
 fn run_tmux_silent(args: &[&str]) -> bool {
     std::process::Command::new("tmux")
@@ -31,6 +32,8 @@ pub struct AgentPane {
     start_time: DateTime<Utc>,
     worktree: Option<PathBuf>,
     client_session: Option<String>,
+    detector: CompletionDetector,
+    status_override: Option<AgentStatus>,
 }
 
 impl AgentPane {
@@ -76,6 +79,8 @@ impl AgentPane {
             start_time: Utc::now(),
             worktree,
             client_session: None,
+            detector: CompletionDetector::from_profile(profile),
+            status_override: None,
         })
     }
 
@@ -144,6 +149,8 @@ impl AgentPane {
             start_time: Utc::now(),
             worktree: None,
             client_session: client_sess,
+            detector: CompletionDetector::disabled(),
+            status_override: None,
         })
     }
 
@@ -152,6 +159,32 @@ impl AgentPane {
         self.pty.set_agent_status(Some(status.as_str()));
         self.pty
             .set_needs_attention(status == AgentStatus::AwaitingInput);
+    }
+
+    /// Applies a status produced by the detector unless an explicit override is active.
+    fn apply_detected(&mut self, new: Option<AgentStatus>) {
+        if let Some(st) = new {
+            if self.status_override.is_none() && st != self.status {
+                self.set_status(st);
+            }
+        }
+    }
+
+    /// Forces a status (e.g. `Failed` when a worker reports `blocked`) until cleared with `None`.
+    pub fn set_status_override(&mut self, status: Option<AgentStatus>) {
+        self.status_override = status;
+        match status {
+            Some(st) => self.set_status(st),
+            None => {
+                let st = self.detector.status();
+                self.set_status(st);
+            }
+        }
+    }
+
+    /// Marks the agent as failed until the override is cleared.
+    pub fn mark_failed(&mut self) {
+        self.set_status_override(Some(AgentStatus::Failed));
     }
 
     pub fn status(&self) -> AgentStatus {
@@ -206,8 +239,14 @@ impl Pane for AgentPane {
 
     fn send_input(&mut self, data: &[u8]) {
         // The user answering an agent that was waiting on them resumes it
-        if self.status == AgentStatus::AwaitingInput && !data.is_empty() {
+        if self.status == AgentStatus::AwaitingInput
+            && !data.is_empty()
+            && self.status_override.is_none()
+        {
             self.set_status(AgentStatus::Running);
+        }
+        if !data.is_empty() {
+            self.detector.on_input(Instant::now());
         }
         self.pty.send_input(data);
     }
@@ -243,25 +282,47 @@ impl Pane for AgentPane {
             // Only hooks addressed to this pane change its status; a hook without a pane id
             // cannot be attributed to a specific agent instance.
             if payload.pane_id == Some(self.id()) {
-                match payload.event {
-                    HookEvent::NeedsPermission | HookEvent::NeedsInput => {
-                        self.set_status(AgentStatus::AwaitingInput);
+                if self.detector.enabled() {
+                    let r = self.detector.on_hook(&payload.event);
+                    self.apply_detected(r);
+                } else {
+                    match payload.event {
+                        HookEvent::NeedsPermission | HookEvent::NeedsInput => {
+                            self.set_status(AgentStatus::AwaitingInput);
+                        }
+                        HookEvent::TaskDone => {
+                            self.set_status(AgentStatus::Done);
+                        }
+                        HookEvent::Error => {
+                            self.set_status(AgentStatus::Idle);
+                        }
+                        HookEvent::Exited => {
+                            self.set_status(AgentStatus::Exited);
+                        }
+                        HookEvent::UsageThreshold | HookEvent::PasteImage => {}
                     }
-                    HookEvent::TaskDone => {
-                        self.set_status(AgentStatus::Done);
-                    }
-                    HookEvent::Error => {
-                        self.set_status(AgentStatus::Idle);
-                    }
-                    HookEvent::Exited => {
-                        self.set_status(AgentStatus::Exited);
-                    }
-                    HookEvent::UsageThreshold | HookEvent::PasteImage => {}
                 }
             }
         }
 
+        match event {
+            AppEvent::PtyOutput { pane_id, data } if *pane_id == self.id() => {
+                let r = self.detector.on_output(data, Instant::now());
+                self.apply_detected(r);
+            }
+            AppEvent::PtyExited { pane_id, exit_code } if *pane_id == self.id() => {
+                let r = self.detector.on_exit(*exit_code);
+                self.apply_detected(r);
+            }
+            _ => {}
+        }
+
         self.pty.handle_event(event)
+    }
+
+    fn on_tick(&mut self) {
+        let r = self.detector.tick(Instant::now());
+        self.apply_detected(r);
     }
 
     fn on_resize(&mut self, width: u16, height: u16) {
