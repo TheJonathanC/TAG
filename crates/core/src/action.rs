@@ -41,6 +41,12 @@ pub enum Action {
     Orchestrate,
     /// Open/close the workers table overlay.
     ToggleWorkers,
+    /// Open/close the project switcher overlay.
+    ToggleProjectSwitcher,
+    /// Jump back to the previously active workspace (across projects).
+    LastWorkspace,
+    /// Jump to the next agent awaiting input, across all projects.
+    NextAttention,
     /// Peek (floating live view of) the selected card / next worker needing input.
     Peek,
     Resize(Direction, u16),

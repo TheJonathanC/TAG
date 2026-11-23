@@ -4,6 +4,7 @@ pub mod first_run_tour;
 pub mod help_overlay;
 pub mod palette;
 pub mod peek;
+pub mod project_switcher;
 pub mod rename_modal;
 pub mod status_bar;
 pub mod tab_tray;
@@ -22,6 +23,10 @@ pub use palette::{
     PaletteClick, PaletteState,
 };
 pub use peek::{peek_area, peek_title, render_peek_frame};
+pub use project_switcher::{
+    preview_area, render_project_switcher, switcher_rows, ProjectSwitcherState, SwitcherPane,
+    SwitcherProject, SwitcherRow, SwitcherTarget, SwitcherWorkspace,
+};
 pub use rename_modal::{render_prompt_modal, render_rename_modal, RenameModalState};
 pub use status_bar::{
     hit_test_status_bar, render_status_bar, StatusBarClickTarget, StatusBarProps,

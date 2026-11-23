@@ -135,7 +135,9 @@ impl Keymap {
         leader_bindings.insert('v', (Action::PasteFromClipboard, "Paste clipboard"));
         leader_bindings.insert('V', (Action::PasteFromClipboard, "Paste clipboard"));
         leader_bindings.insert('p', (Action::PasteFromClipboard, "Paste clipboard"));
-        leader_bindings.insert('P', (Action::PasteFromClipboard, "Paste clipboard"));
+        leader_bindings.insert('P', (Action::ToggleProjectSwitcher, "Project switcher"));
+        leader_bindings.insert('`', (Action::LastWorkspace, "Last workspace"));
+        leader_bindings.insert('!', (Action::NextAttention, "Next agent needing input"));
         leader_bindings.insert('e', (Action::ToggleVaultOverlay, "Vault (Secrets & Env)"));
         leader_bindings.insert('E', (Action::ToggleVaultOverlay, "Vault (Secrets & Env)"));
         leader_bindings.insert('n', (Action::ToggleDnd, "Do Not Disturb"));

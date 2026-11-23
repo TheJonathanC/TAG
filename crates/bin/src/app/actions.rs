@@ -145,6 +145,9 @@ pub(crate) fn execute_action(state: &mut AppState, action: Action) -> bool {
         }
         Action::ToggleWorkers => action_toggle_workers(state),
         Action::Peek => action_peek(state),
+        Action::ToggleProjectSwitcher => action_toggle_project_switcher(state),
+        Action::LastWorkspace => action_last_workspace(state),
+        Action::NextAttention => action_next_attention(state),
         Action::Orchestrate => {
             state.goal_prompt = Some(String::new());
         }

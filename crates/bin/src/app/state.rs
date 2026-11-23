@@ -129,6 +129,10 @@ pub(crate) struct AppState {
     pub(crate) active_project_id: Option<String>,
     /// Layouts of every other project (their panes stay in `panes`).
     pub(crate) parked: HashMap<String, ParkedProject>,
+    /// Project switcher overlay (`^Space P`).
+    pub(crate) project_switcher: tag_ui::ProjectSwitcherState,
+    /// Current and previous (project, workspace) for `^Space ``.
+    pub(crate) nav: NavHistory,
 }
 
 /// Capacity of the [`StateEvent`] broadcast channel.
@@ -228,6 +232,8 @@ impl AppState {
             last_project_check: std::time::Instant::now(),
             active_project_id: None,
             parked: HashMap::new(),
+            project_switcher: tag_ui::ProjectSwitcherState::default(),
+            nav: NavHistory::default(),
         })
     }
 

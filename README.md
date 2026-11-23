@@ -463,6 +463,9 @@ TAG runs each task in its own worker agent and git worktree, and merges follow t
 
 In the UI, `Ctrl+Space A` opens the workers table (open, peek, hide, kill, reply), `Ctrl+Space f` peeks
 a worker in a floating live view, and background workers show as clickable cards above the status bar.
+`Ctrl+Space P` opens the project switcher (fuzzy tree of projects, workspaces and panes with a live preview),
+``Ctrl+Space ` `` jumps back to the last workspace across projects, and `Ctrl+Space !` jumps to the next agent
+needing input in any project.
 
 ```bash
 tag orchestrate "Add OAuth login" [--conductor claude] [--workers agy-neon,claude] \
